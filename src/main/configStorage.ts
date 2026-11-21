@@ -21,6 +21,7 @@ export interface ApplicationDirectoryOptions {
   isPackaged: boolean;
   platform: NodeJS.Platform;
   appImagePath?: string;
+  portableExecutableDirectory?: string;
 }
 
 export function getApplicationDirectory({
@@ -29,9 +30,12 @@ export function getApplicationDirectory({
   isPackaged,
   platform,
   appImagePath,
+  portableExecutableDirectory,
 }: ApplicationDirectoryOptions): string {
   const platformPath = platform === 'win32' ? path.win32 : path;
   if (!isPackaged) return platformPath.resolve(appPath);
+  if (platform === 'win32' && portableExecutableDirectory)
+    return platformPath.resolve(portableExecutableDirectory);
   if (platform === 'darwin')
     return getMacApplicationDirectory(appPath, executablePath);
   if (platform === 'linux' && appImagePath)

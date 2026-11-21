@@ -1,6 +1,5 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'node:path';
-import started from 'electron-squirrel-startup';
 import { ConfigStorage, getApplicationDirectory } from './main/configStorage';
 import {
   KissTcpRxService,
@@ -28,11 +27,6 @@ interface InterfaceConfiguration {
   serialDevice: string;
   baudRate: string;
   reconnectTimeout: string;
-}
-
-// Handle creating/removing shortcuts on Windows when installing/uninstalling.
-if (started) {
-  app.quit();
 }
 
 const createWindow = () => {
@@ -181,6 +175,7 @@ app.whenReady().then(async () => {
     isPackaged: app.isPackaged,
     platform: process.platform,
     appImagePath: process.env.APPIMAGE,
+    portableExecutableDirectory: process.env.PORTABLE_EXECUTABLE_DIR,
   });
   configStorage = new ConfigStorage({
     applicationDirectory,

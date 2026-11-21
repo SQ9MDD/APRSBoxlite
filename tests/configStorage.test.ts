@@ -138,6 +138,48 @@ test('persists configured interfaces without replacing station settings', async 
   });
 });
 
+test('uses the Windows portable launcher directory instead of its extraction directory', () => {
+  assert.equal(
+    getApplicationDirectory({
+      appPath:
+        'C:\\Users\\operator\\AppData\\Local\\Temp\\portable\\resources\\app.asar',
+      executablePath:
+        'C:\\Users\\operator\\AppData\\Local\\Temp\\portable\\aprsbox-lite.exe',
+      portableExecutableDirectory: 'D:\\Radio Apps\\APRSBox Lite',
+      isPackaged: true,
+      platform: 'win32',
+    }),
+    'D:\\Radio Apps\\APRSBox Lite',
+  );
+});
+
+test('uses the Windows application directory when the portable launcher directory is empty', () => {
+  assert.equal(
+    getApplicationDirectory({
+      appPath: 'C:\\APRSBox Lite\\resources\\app.asar',
+      executablePath: 'C:\\APRSBox Lite\\aprsbox-lite.exe',
+      portableExecutableDirectory: '',
+      isPackaged: true,
+      platform: 'win32',
+    }),
+    'C:\\APRSBox Lite',
+  );
+});
+
+test('ignores the portable launcher directory during Windows development', () => {
+  assert.equal(
+    getApplicationDirectory({
+      appPath: 'C:\\work\\aprsbox-lite',
+      executablePath:
+        'C:\\work\\aprsbox-lite\\node_modules\\electron\\dist\\electron.exe',
+      portableExecutableDirectory: 'D:\\Radio Apps\\APRSBox Lite',
+      isPackaged: false,
+      platform: 'win32',
+    }),
+    'C:\\work\\aprsbox-lite',
+  );
+});
+
 test('resolves platform application directories', () => {
   assert.equal(
     getApplicationDirectory({
@@ -162,6 +204,7 @@ test('resolves platform application directories', () => {
       appPath: '/Applications/APRSBox Lite.app/Contents/Resources/app.asar',
       executablePath:
         '/Applications/APRSBox Lite.app/Contents/MacOS/APRSBox Lite',
+      portableExecutableDirectory: 'D:\\Radio Apps\\APRSBox Lite',
       isPackaged: true,
       platform: 'darwin',
     }),
@@ -172,6 +215,7 @@ test('resolves platform application directories', () => {
       appPath: '/tmp/.mount_app/resources/app.asar',
       executablePath: '/tmp/.mount_app/aprsbox-lite',
       appImagePath: '/home/user/Downloads/APRSBoxLite.AppImage',
+      portableExecutableDirectory: 'D:\\Radio Apps\\APRSBox Lite',
       isPackaged: true,
       platform: 'linux',
     }),

@@ -41,19 +41,31 @@ jobs:
         run: npm ci
 
       - name: Build installers with Electron Forge
+        if: runner.os != 'Windows'
         run: npm run make
 
+      - name: Build Windows Portable EXE
+        if: runner.os == 'Windows'
+        run: npm run make:win
+
       - name: Upload installers
+        if: runner.os != 'Windows'
         uses: actions/upload-artifact@v7
         with:
           name: aprsbox-lite-${{ matrix.artifact }}
           path: |
             out/make/**/*.dmg
             out/make/**/*.zip
-            out/make/**/*.exe
             out/make/**/*.deb
             out/make/**/*.rpm
-            out/make/**/*.nupkg
-            out/make/**/RELEASES
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Windows Portable EXE
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: aprsbox-lite-${{ matrix.artifact }}
+          path: dist/APRSBoxLite-*-win-x64.exe
           if-no-files-found: error
           retention-days: 14
