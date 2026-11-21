@@ -44,9 +44,17 @@ jobs:
         if: runner.os != 'Windows'
         run: npm run make
 
-      - name: Build Windows Portable EXE
+      - name: Package Windows application with Electron Forge
         if: runner.os == 'Windows'
         run: npm run make:win
+
+      - name: Create Windows portable ZIP
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path 'out/aprsbox-lite-win32-x64/*' -DestinationPath "dist/APRSBoxLite-$version-win-x64.zip"
 
       - name: Upload installers
         if: runner.os != 'Windows'
@@ -61,11 +69,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload Windows Portable EXE
+      - name: Upload Windows portable ZIP
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
           name: aprsbox-lite-${{ matrix.artifact }}
-          path: dist/APRSBoxLite-*-win-x64.exe
+          path: dist/APRSBoxLite-*-win-x64.zip
           if-no-files-found: error
           retention-days: 14
