@@ -1,16 +1,23 @@
 import coverageIcon from './icons/map-marker-radius.svg';
 import gridIcon from './icons/grid.svg';
-import packetIcon from './icons/clipboard-text-multiple-outline.svg';
-import resetIcon from './icons/refresh.svg';
+import packetIcon from './icons/message-alert.svg';
+import packetOffIcon from './icons/message-off.svg';
+import resetIcon from './icons/crosshairs-gps.svg';
 import rulerIcon from './icons/ruler.svg';
-import scrollerIcon from './icons/view-list-outline.svg';
+import scrollerIcon from './icons/format-list-bulleted.svg';
+import scrollerOffIcon from './icons/format-list-bulleted-square.svg';
 import tracksIcon from './icons/track-light.svg';
+import tracksOffIcon from './icons/track-light-off.svg';
+import coverageOffIcon from './icons/map-marker-radius-outline.svg';
+import rulerOffIcon from './icons/ruler-square.svg';
+import gridOffIcon from './icons/grid-off.svg';
 import darkThemeIcon from './icons/weather-night.svg';
 import lightThemeIcon from './icons/weather-sunny.svg';
 import systemThemeIcon from './icons/brightness-auto.svg';
+import beaconIcon from './icons/access-point.svg';
 import generalSettingsIcon from './icons/cog.svg';
-import stationSettingsIcon from './icons/home.svg';
-import interfacesSettingsIcon from './icons/serial-port.svg';
+import stationSettingsIcon from './icons/antenna.svg';
+import interfacesSettingsIcon from './icons/radio-handheld.svg';
 import type { AppView } from '../types';
 
 export type MapToolId =
@@ -29,19 +36,46 @@ interface ToolbarControl {
   id: MapToolId;
   label: string;
   icon: string;
+  offIcon: string;
 }
 
 const mapControls: ToolbarControl[] = [
-  { id: 'tracks', label: 'Show or hide tracks', icon: tracksIcon },
-  { id: 'coverage', label: 'Show or hide coverage', icon: coverageIcon },
-  { id: 'packet', label: 'Show or hide latest packet', icon: packetIcon },
+  {
+    id: 'tracks',
+    label: 'Show or hide tracks',
+    icon: tracksIcon,
+    offIcon: tracksOffIcon,
+  },
+  {
+    id: 'coverage',
+    label: 'Show or hide coverage',
+    icon: coverageIcon,
+    offIcon: coverageOffIcon,
+  },
+  {
+    id: 'packet',
+    label: 'Show or hide latest packet',
+    icon: packetIcon,
+    offIcon: packetOffIcon,
+  },
   {
     id: 'scroller',
     label: 'Show or hide station scroller',
     icon: scrollerIcon,
+    offIcon: scrollerOffIcon,
   },
-  { id: 'ruler', label: 'Show or hide ruler', icon: rulerIcon },
-  { id: 'grid', label: 'Show or hide Maidenhead grid', icon: gridIcon },
+  {
+    id: 'ruler',
+    label: 'Show or hide ruler',
+    icon: rulerIcon,
+    offIcon: rulerOffIcon,
+  },
+  {
+    id: 'grid',
+    label: 'Show or hide Maidenhead grid',
+    icon: gridIcon,
+    offIcon: gridOffIcon,
+  },
 ];
 
 const settingsControls: Array<{
@@ -58,9 +92,9 @@ export function createTopbar(
   view: AppView,
   tools: MapToolState,
   themeMode: ThemeMode,
-  themeMenuOpen: boolean,
   settingsSection: SettingsToolbarSection,
   stationLabel: string,
+  mapMaskOpacity: number,
 ): string {
   const themeIcons: Record<ThemeMode, string> = {
     light: lightThemeIcon,
@@ -69,14 +103,19 @@ export function createTopbar(
   };
   const mapToolbar =
     view === 'map'
-      ? `<div class="map-manipulators" aria-label="Map tools"><button class="map-tool" data-action="reset-map" type="button" aria-label="Reset map view" title="Reset map view"><img src="${resetIcon}" alt="" /></button>${mapControls.map((control) => `<button class="map-tool ${tools[control.id] ? 'is-active' : ''}" data-tool="${control.id}" type="button" aria-pressed="${tools[control.id]}" aria-label="${control.label}" title="${control.label}"><img src="${control.icon}" alt="" /></button>`).join('')}</div>`
+      ? `<div class="map-manipulators" aria-label="Map tools"><button class="map-tool" data-action="reset-map" type="button" aria-label="Reset map view" title="Reset map view"><img src="${resetIcon}" alt="" /></button>${mapControls.map((control) => `<button class="map-tool ${tools[control.id] ? 'is-active' : ''}" data-tool="${control.id}" type="button" aria-pressed="${tools[control.id]}" aria-label="${control.label}" title="${control.label}"><img src="${tools[control.id] ? control.icon : control.offIcon}" alt="" /></button>`).join('')}<select class="map-mask-select" data-map-mask aria-label="Map mask opacity" title="Map mask opacity">${Array.from(
+          { length: 11 },
+          (_, index) => index * 10,
+        )
+          .map(
+            (value) =>
+              `<option value="${value}"${value === mapMaskOpacity ? ' selected' : ''}>${value}%</option>`,
+          )
+          .join('')}</select></div>`
       : '';
   const settingsToolbar =
     view === 'settings'
       ? `<div class="settings-manipulators" aria-label="Settings sections">${settingsControls.map((control) => `<button class="map-tool ${settingsSection === control.id ? 'is-active' : ''}" data-settings-section="${control.id}" type="button" aria-pressed="${settingsSection === control.id}" aria-label="${control.label}" title="${control.label}"><img src="${control.icon}" alt="" /></button>`).join('')}</div>`
       : '';
-  const themeMenu = themeMenuOpen
-    ? `<div class="theme-menu" role="menu"><button class="${themeMode === 'light' ? 'is-active' : ''}" data-theme="light" type="button" role="menuitem"><img src="${lightThemeIcon}" alt="" />Light</button><button class="${themeMode === 'dark' ? 'is-active' : ''}" data-theme="dark" type="button" role="menuitem"><img src="${darkThemeIcon}" alt="" />Dark</button><button class="${themeMode === 'system' ? 'is-active' : ''}" data-theme="system" type="button" role="menuitem"><img src="${systemThemeIcon}" alt="" />System</button></div>`
-    : '';
-  return `<header class="topbar">${mapToolbar}${settingsToolbar}<div class="topbar-account"><span class="topbar-callsign"><span class="status-dot"></span>${stationLabel}</span><div class="theme-control"><button class="theme-toggle" data-action="toggle-theme-menu" type="button" aria-label="Change color theme" aria-expanded="${themeMenuOpen}" title="Theme: ${themeMode}"><img src="${themeIcons[themeMode]}" alt="" /></button>${themeMenu}</div></div></header>`;
+  return `<header class="topbar">${mapToolbar}${settingsToolbar}<div class="topbar-account"><span class="topbar-callsign"><span class="status-dot"></span>${stationLabel}</span><button class="theme-toggle" data-action="send-beacon" type="button" aria-label="Send beacon" title="Send beacon"><img src="${beaconIcon}" alt="" /></button><div class="theme-control"><button class="theme-toggle" data-action="cycle-theme" type="button" aria-label="Change color theme (current: ${themeMode})" title="Theme: ${themeMode}"><img src="${themeIcons[themeMode]}" alt="" /></button></div></div></header>`;
 }

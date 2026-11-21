@@ -15,10 +15,12 @@ import type {
 import { createSidebar } from './components/Sidebar';
 import { createTopbar } from './components/Topbar';
 import type { MapToolId, MapToolState, ThemeMode } from './components/Topbar';
-import { createRightPanel } from './components/RightPanel';
-import { latestPacket, mockStations } from './data/mockData';
+import { createRightPanel, renderLastPacket } from './components/RightPanel';
+import { renderPacketRows } from './components/PacketScroller';
 import { renderMapView } from './views/MapView';
-import { renderMessagesView } from './views/MessagesView';
+import type { MapViewport } from './views/MapView';
+import type { RulerState } from './views/MapRuler';
+import { renderMessageHistory, renderMessagesView } from './views/MessagesView';
 import {
   renderSettingsView,
   type PhgValues,
@@ -26,10 +28,10 @@ import {
   type SettingsSection,
   type StationSettings,
 } from './views/SettingsView';
-import { renderStationsView } from './views/StationsView';
+import { renderStationDetails, renderStationsView } from './views/StationsView';
 import { renderTrafficMonitorView } from './views/TrafficMonitorView';
 import type { TrafficMonitorFrame } from './views/TrafficMonitorView';
-import type { AppView, Station } from './types';
+import type { AppView, Station, AprsMessage } from './types';
 
 const root = document.querySelector<HTMLDivElement>('#app');
 
@@ -38,13 +40,22 @@ if (!root) throw new Error('Could not find the app root element.');
 const appRoot = root;
 
 let activeView: AppView = 'map';
-let selectedStation: Station | undefined;
+let selectedCallsign: string | undefined;
+let detailCallsign: string | undefined;
+let messageRecipient: string | undefined;
+let messages: AprsMessage[] = [];
+let liveStations: Station[] = [];
+let updateStationMarkers: ((stations: Station[]) => void) | undefined;
+let mapViewport: MapViewport | undefined;
+const rulerState: RulerState = { measurementActive: false };
+let mountedView: AppView | undefined;
 let activeSettingsSection: SettingsSection = 'general';
 let selectedInterfaceId: string | undefined;
 let interfaces: InterfaceSettings[] = [];
 let interfaceDraft: InterfaceSettings = createInterfaceDraft();
 let themeMode: ThemeMode = 'system';
-let themeMenuOpen = false;
+let beaconSending = false;
+let mapMaskOpacity = { light: 10, dark: 20 };
 let stationSettings: StationSettings = {
   callsign: 'SQ9MDD',
   ssid: '-8',
@@ -53,6 +64,11 @@ let stationSettings: StationSettings = {
   status: 'Monitoring APRS traffic',
   beaconInterval: '15 minutes',
   statusInterval: '30 minutes',
+  symbolTable: '/',
+  symbolCode: '>',
+  symbolOverlay: '',
+  beaconPath: '',
+  beaconInterfaceId: '',
 };
 let alertMessage: AlertMessage | undefined;
 let confirmation: Confirmation | undefined;
@@ -107,6 +123,10 @@ function applyTheme(): void {
         : 'light'
       : themeMode;
   document.documentElement.dataset.theme = resolvedTheme;
+  document.documentElement.style.setProperty(
+    '--map-mask-opacity',
+    String(mapMaskOpacity[resolvedTheme] / 100),
+  );
 }
 
 function parseCoordinates(value: string): Coordinates | undefined {
@@ -172,6 +192,11 @@ function applyStoredStationConfiguration(
     'status',
     'beaconInterval',
     'statusInterval',
+    'symbolTable',
+    'symbolCode',
+    'symbolOverlay',
+    'beaconPath',
+    'beaconInterfaceId',
   ];
   for (const key of keys) {
     if (typeof stored[key] === 'string') stationSettings[key] = stored[key];
@@ -204,20 +229,70 @@ function isInterfaceSettings(value: unknown): value is InterfaceSettings {
 async function loadConfiguration(): Promise<void> {
   try {
     const configuration = await window.aprsbox.config.get();
+    const mask = configuration.mapMaskOpacity as
+      | Record<string, unknown>
+      | undefined;
+    if (mask && typeof mask === 'object') {
+      for (const theme of ['light', 'dark'] as const) {
+        const value = mask[theme];
+        if (
+          typeof value === 'number' &&
+          Number.isInteger(value) &&
+          value >= 0 &&
+          value <= 100 &&
+          value % 10 === 0
+        )
+          mapMaskOpacity[theme] = value;
+      }
+    }
+    applyTheme();
     applyStoredStationConfiguration(configuration);
     applyStoredInterfaces(configuration);
+    const viewport = configuration.mapViewport as
+      | Partial<MapViewport>
+      | undefined;
+    if (
+      viewport &&
+      typeof viewport.latitude === 'number' &&
+      Number.isFinite(viewport.latitude) &&
+      Math.abs(viewport.latitude) <= 90 &&
+      typeof viewport.longitude === 'number' &&
+      Number.isFinite(viewport.longitude) &&
+      typeof viewport.zoom === 'number' &&
+      Number.isInteger(viewport.zoom) &&
+      viewport.zoom >= 0 &&
+      viewport.zoom <= 19
+    ) {
+      mapViewport = viewport as MapViewport;
+    }
     renderApp();
   } catch {
     // The UI remains usable with its in-memory defaults if configuration is unavailable.
+    renderApp();
   }
 }
 
 async function loadTraffic(): Promise<void> {
   try {
-    [trafficFrames, interfaceStatuses] = await Promise.all([
+    const [recentFrames, statuses] = await Promise.all([
       window.aprsbox.traffic.getRecent(),
       window.aprsbox.traffic.getInterfaceStatuses(),
     ]);
+    const framesById = new Map(
+      [...trafficFrames, ...recentFrames].map((frame) => [frame.id, frame]),
+    );
+    trafficFrames = [...framesById.values()]
+      .sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt))
+      .slice(0, 1000);
+    interfaceStatuses = { ...statuses, ...interfaceStatuses };
+    const packetBox = appRoot.querySelector('.last-heard-packet');
+    if (packetBox)
+      packetBox.outerHTML = renderLastPacket(
+        trafficFrames[0],
+        liveStations,
+        parseCoordinates(stationSettings.location),
+      );
+    refreshPacketScroller();
     if (activeView === 'traffic' || activeView === 'settings') renderApp();
   } catch {
     // Traffic is live-only; an unavailable Main Process leaves the monitor empty.
@@ -226,12 +301,32 @@ async function loadTraffic(): Promise<void> {
 
 window.aprsbox.traffic.onReceived((frame) => {
   trafficFrames = [frame, ...trafficFrames].slice(0, 1_000);
+  const packetBox = appRoot.querySelector('.last-heard-packet');
+  if (packetBox)
+    packetBox.outerHTML = renderLastPacket(
+      frame,
+      liveStations,
+      parseCoordinates(stationSettings.location),
+    );
+  refreshPacketScroller();
   if (activeView === 'traffic') renderApp();
 });
 
 window.aprsbox.traffic.onInterfaceStatus(({ interfaceId, status }) => {
   interfaceStatuses = { ...interfaceStatuses, [interfaceId]: status };
   if (activeView === 'settings') renderApp();
+  if (activeView === 'messages') {
+    const option = [
+      ...appRoot.querySelectorAll<HTMLOptionElement>(
+        'select[name="interfaceId"] option',
+      ),
+    ].find((item) => item.value === interfaceId);
+    const configured = interfaces.find((item) => item.id === interfaceId);
+    if (option && configured) {
+      option.disabled = status !== 'connected';
+      option.textContent = `${configured.name || configured.hostPort} · ${status}`;
+    }
+  }
 });
 
 colorScheme.addEventListener('change', () => {
@@ -247,22 +342,64 @@ const pageRenderers: Record<
 > = {
   map: () =>
     renderMapView({
-      stations: mockStations,
-      resetCenter: (() => {
+      subscribeToStations: (update) => {
+        updateStationMarkers = update;
+        update(liveStations);
+        return () => {
+          updateStationMarkers = undefined;
+        };
+      },
+      viewport: mapViewport,
+      rulerState,
+      ownPosition: () => parseCoordinates(stationSettings.location),
+      onStationAction: (action, callsign) => {
+        if (action === 'details') {
+          detailCallsign = callsign;
+          activeView = 'stations';
+        } else {
+          messageRecipient = callsign;
+          activeView = 'messages';
+        }
+        renderApp();
+      },
+      overlayVisibility: () => ({
+        tracks: mapTools.tracks,
+        coverage: mapTools.coverage,
+        grid: mapTools.grid,
+        ruler: mapTools.ruler,
+      }),
+      onViewportChanged: (viewport) => {
+        mapViewport = viewport;
+        void window.aprsbox.config
+          .saveMapViewport(viewport)
+          .catch(console.error);
+      },
+      resetCenter: () => {
         const coordinates = parseCoordinates(stationSettings.location);
         return coordinates
           ? ([coordinates.latitude, coordinates.longitude] as [number, number])
           : ([50.055, 19.97] as [number, number]);
-      })(),
-      onStationSelected: (station) => {
-        selectedStation = station;
-        mapTools.scroller = true;
-        renderApp();
       },
     }),
-  stations: () => renderStationsView(mockStations),
+  stations: () => {
+    const station = liveStations.find(
+      (item) => item.callsign === detailCallsign,
+    );
+    return station
+      ? renderStationDetails(
+          station,
+          parseCoordinates(stationSettings.location),
+        )
+      : renderStationsView(liveStations);
+  },
   traffic: () => renderTrafficMonitorView(trafficFrames),
-  messages: () => renderMessagesView(),
+  messages: () =>
+    renderMessagesView(
+      messages,
+      messageRecipient,
+      interfaces,
+      interfaceStatuses,
+    ),
   settings: () =>
     renderSettingsView(
       activeSettingsSection,
@@ -277,21 +414,214 @@ const pageRenderers: Record<
     ),
 };
 
+function renderMapDrawer(): string {
+  return activeView === 'map' && (mapTools.scroller || mapTools.packet)
+    ? createRightPanel({
+        station: liveStations.find(
+          (station) => station.callsign === selectedCallsign,
+        ),
+        latestPacket: trafficFrames[0],
+        stations: liveStations,
+        showLatestPacket: mapTools.packet,
+        showStations: mapTools.scroller,
+        frames: trafficFrames,
+        ownCallsign: `${stationSettings.callsign}${stationSettings.ssid}`,
+        ownPosition: parseCoordinates(stationSettings.location),
+      })
+    : '';
+}
+
+function refreshPacketScroller(): void {
+  const scroller = appRoot.querySelector<HTMLElement>('.packet-scroller');
+  const scroll = appRoot.querySelector<HTMLElement>('.station-scroll');
+  if (!scroller || !scroll) return;
+  const scrollTop = scroll.scrollTop;
+  const oldHeight = scroll.scrollHeight;
+  scroller.innerHTML = renderPacketRows(
+    trafficFrames,
+    liveStations,
+    `${stationSettings.callsign}${stationSettings.ssid}`,
+  );
+  if (scrollTop > 0)
+    scroll.scrollTop = scrollTop + scroll.scrollHeight - oldHeight;
+}
+
+setInterval(() => {
+  if (activeView === 'map' && mapTools.scroller) refreshPacketScroller();
+}, 60_000);
+
+function receiveStations(stations: Station[]): void {
+  liveStations = stations;
+  if (!stations.some((station) => station.callsign === selectedCallsign)) {
+    selectedCallsign = undefined;
+  }
+  updateStationMarkers?.(stations);
+  const drawer = appRoot.querySelector('.right-panel');
+  if (drawer) {
+    const scrollTop = drawer.querySelector('.station-scroll')?.scrollTop ?? 0;
+    drawer.outerHTML = renderMapDrawer();
+    const scroll = appRoot.querySelector<HTMLElement>('.station-scroll');
+    if (scroll) scroll.scrollTop = scrollTop;
+  }
+  if (activeView === 'stations') {
+    const view = appRoot.querySelector('.view-region');
+    const station = stations.find((item) => item.callsign === detailCallsign);
+    if (view)
+      view.innerHTML = (
+        station
+          ? renderStationDetails(
+              station,
+              parseCoordinates(stationSettings.location),
+            )
+          : renderStationsView(stations)
+      ).html;
+  }
+}
+
+appRoot.addEventListener('click', (event) => {
+  if (!(event.target instanceof Element)) return;
+  const symbol = event.target.closest<HTMLButtonElement>('[data-symbol-code]');
+  if (symbol?.dataset.symbolCode) {
+    stationSettings.symbolCode = symbol.dataset.symbolCode;
+    renderApp();
+    return;
+  }
+  const conversation = event.target.closest<HTMLButtonElement>(
+    '[data-message-conversation]',
+  );
+  if (conversation?.dataset.messageConversation) {
+    messageRecipient = conversation.dataset.messageConversation;
+    renderApp();
+    return;
+  }
+  const retry = event.target.closest<HTMLButtonElement>('[data-retry-message]');
+  if (retry?.dataset.retryMessage) {
+    void window.aprsbox.messages
+      .retry(retry.dataset.retryMessage)
+      .catch((error) => {
+        const output = appRoot.querySelector<HTMLElement>(
+          '[data-message-error]',
+        );
+        if (output) output.textContent = String(error);
+      });
+    return;
+  }
+  if (event.target.closest('[data-action="stations-back"]')) {
+    detailCallsign = undefined;
+    renderApp();
+    return;
+  }
+  const stationButton =
+    event.target.closest<HTMLButtonElement>('[data-station]');
+  if (stationButton) {
+    selectedCallsign = stationButton.dataset.station;
+    const drawer = appRoot.querySelector('.right-panel');
+    if (drawer) drawer.outerHTML = renderMapDrawer();
+  }
+  if (event.target.closest('.right-panel [data-tool="scroller"]')) {
+    mapTools.scroller = false;
+    renderApp();
+  }
+});
+
+appRoot.addEventListener('submit', (event) => {
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement)) return;
+  if (form.matches('[data-message-new]')) {
+    event.preventDefault();
+    const value = String(new FormData(form).get('recipient') ?? '')
+      .trim()
+      .toUpperCase();
+    if (!/^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/.test(value)) {
+      const input = form.querySelector<HTMLInputElement>(
+        'input[name="recipient"]',
+      );
+      input?.setCustomValidity('Enter a valid callsign and SSID.');
+      input?.reportValidity();
+      input?.addEventListener('input', () => input.setCustomValidity(''), {
+        once: true,
+      });
+      return;
+    }
+    messageRecipient = value.replace(/-0$/, '');
+    renderApp();
+    return;
+  }
+  if (!form.matches('[data-message-send]') || !messageRecipient) return;
+  event.preventDefault();
+  const values = new FormData(form);
+  const request = {
+    recipient: messageRecipient,
+    text: String(values.get('text') ?? ''),
+    interfaceId: String(values.get('interfaceId') ?? ''),
+    path: String(values.get('path') ?? ''),
+  };
+  const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+  const output = form.querySelector<HTMLElement>('[data-message-error]');
+  if (submit) submit.disabled = true;
+  if (output) output.textContent = '';
+  void window.aprsbox.messages
+    .send(request)
+    .then(() => {
+      const input = form.querySelector<HTMLTextAreaElement>(
+        'textarea[name="text"]',
+      );
+      if (input && input.value === request.text) input.value = '';
+    })
+    .catch((error) => {
+      if (output) output.textContent = String(error);
+    })
+    .finally(() => {
+      if (submit) submit.disabled = false;
+    });
+});
+
+function updateMessages(next: AprsMessage[]): void {
+  messages = next;
+  if (activeView !== 'messages') return;
+  const history = appRoot.querySelector<HTMLElement>('[data-message-history]');
+  if (history && messageRecipient) {
+    const atBottom =
+      history.scrollHeight - history.scrollTop - history.clientHeight < 32;
+    history.innerHTML = renderMessageHistory(messages, messageRecipient);
+    if (atBottom) history.scrollTop = history.scrollHeight;
+  }
+  const list = appRoot.querySelector<HTMLElement>('.messages-conversations');
+  if (list) {
+    const template = document.createElement('template');
+    template.innerHTML = renderMessagesView(
+      messages,
+      messageRecipient,
+      interfaces,
+      interfaceStatuses,
+    ).html;
+    list.innerHTML =
+      template.content.querySelector('.messages-conversations')?.innerHTML ??
+      '';
+  }
+}
+
 function renderApp(): void {
-  disposeCurrentView?.();
+  const page = pageRenderers[activeView]();
+  const mapDrawer = renderMapDrawer();
+  const existingMap =
+    mountedView === 'map' && activeView === 'map'
+      ? appRoot.querySelector<HTMLElement>('.view-region')
+      : null;
+  if (existingMap) existingMap.remove();
+  else {
+    disposeCurrentView?.();
+    disposeCurrentView = undefined;
+  }
   mountedLocationPicker?.dispose();
   mountedLocationPicker = undefined;
-  const page = pageRenderers[activeView]();
-  const mapDrawer =
-    activeView === 'map' && mapTools.scroller
-      ? createRightPanel({
-          station: selectedStation,
-          latestPacket,
-          stations: mockStations,
-          showLatestPacket: mapTools.packet,
-        })
-      : '';
-  appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView)}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, themeMenuOpen, activeSettingsSection, `${stationSettings.callsign}${stationSettings.ssid}`)}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}`;
+  const resolvedTheme =
+    document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+  appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView)}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, activeSettingsSection, `${stationSettings.callsign}${stationSettings.ssid}`, mapMaskOpacity[resolvedTheme])}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}`;
+  if (existingMap) {
+    appRoot.querySelector('.view-region')?.replaceWith(existingMap);
+    window.dispatchEvent(new Event('aprs-map:visible'));
+  }
   if (locationPickerOpen && locationPickerCenter) {
     mountedLocationPicker = mountLocationPicker(appRoot, locationPickerCenter);
   }
@@ -308,46 +638,58 @@ function renderApp(): void {
   }
   appRoot.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) =>
     button.addEventListener('click', () => {
+      if (button.dataset.view === 'stations') detailCallsign = undefined;
+      if (button.dataset.view === 'messages') messageRecipient = undefined;
       activeView = button.dataset.view as AppView;
       renderApp();
     }),
   );
   appRoot
-    .querySelectorAll<HTMLButtonElement>('[data-station]')
-    .forEach((button) =>
-      button.addEventListener('click', () => {
-        const station = mockStations.find(
-          (item) => item.callsign === button.dataset.station,
-        );
-        if (station) {
-          selectedStation = station;
-          renderApp();
-        }
-      }),
-    );
-  appRoot.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((button) =>
-    button.addEventListener('click', () => {
-      const tool = button.dataset.tool as MapToolId;
-      mapTools[tool] = !mapTools[tool];
-      renderApp();
-    }),
-  );
+    .querySelector<HTMLSelectElement>('[data-map-mask]')
+    ?.addEventListener('change', (event) => {
+      const value = Number((event.currentTarget as HTMLSelectElement).value);
+      if (
+        !Number.isInteger(value) ||
+        value < 0 ||
+        value > 100 ||
+        value % 10 !== 0
+      )
+        return;
+      const theme =
+        document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+      mapMaskOpacity[theme] = value;
+      applyTheme();
+      void window.aprsbox.config
+        .saveMapMask({ ...mapMaskOpacity })
+        .catch(console.error);
+    });
   appRoot
-    .querySelectorAll<HTMLButtonElement>('[data-action="toggle-theme-menu"]')
+    .querySelectorAll<HTMLButtonElement>(
+      '[data-tool]:not(.right-panel [data-tool])',
+    )
     .forEach((button) =>
       button.addEventListener('click', () => {
-        themeMenuOpen = !themeMenuOpen;
+        const tool = button.dataset.tool as MapToolId;
+        mapTools[tool] = !mapTools[tool];
+        window.dispatchEvent(new Event('aprs-map:overlays'));
         renderApp();
       }),
     );
   appRoot
-    .querySelectorAll<HTMLButtonElement>('[data-theme]')
+    .querySelectorAll<HTMLButtonElement>('[data-action="cycle-theme"]')
     .forEach((button) =>
       button.addEventListener('click', () => {
-        themeMode = button.dataset.theme as ThemeMode;
-        themeMenuOpen = false;
+        themeMode =
+          themeMode === 'light'
+            ? 'dark'
+            : themeMode === 'dark'
+              ? 'system'
+              : 'light';
         applyTheme();
         renderApp();
+        appRoot
+          .querySelector<HTMLButtonElement>('[data-action="cycle-theme"]')
+          ?.focus();
       }),
     );
   appRoot
@@ -392,6 +734,30 @@ function renderApp(): void {
       field.addEventListener('input', update);
       field.addEventListener('change', update);
     });
+  appRoot
+    .querySelectorAll<HTMLButtonElement>('[data-action="send-beacon"]')
+    .forEach((button) => button.addEventListener('click', async () => {
+      if (beaconSending) return;
+      beaconSending = true;
+      appRoot.querySelectorAll<HTMLButtonElement>('[data-action="send-beacon"]')
+        .forEach((control) => { control.disabled = true; });
+      try {
+        await window.aprsbox.config.sendBeacon({ ...stationSettings });
+        alertMessage = {
+          title: 'Beacon sent',
+          message: 'Position frame sent to the selected KISS interface.',
+          tone: 'success',
+        };
+      } catch (error) {
+        alertMessage = {
+          title: 'Beacon not sent',
+          message: error instanceof Error ? error.message : String(error),
+          tone: 'error',
+        };
+      }
+      beaconSending = false;
+      renderApp();
+    }));
   appRoot
     .querySelectorAll<HTMLButtonElement>('[data-action="new-interface"]')
     .forEach((button) =>
@@ -533,6 +899,13 @@ function renderApp(): void {
       };
       field.addEventListener('input', update);
       field.addEventListener('change', update);
+      if (field.dataset.stationField === 'symbolTable') {
+        field.addEventListener('change', () => {
+          if (stationSettings.symbolTable === '/')
+            stationSettings.symbolOverlay = '';
+          renderApp();
+        });
+      }
     });
   appRoot
     .querySelectorAll<HTMLButtonElement>('[data-action="save-station"]')
@@ -715,11 +1088,35 @@ function renderApp(): void {
       }),
     );
   const viewRoot = appRoot.querySelector<HTMLElement>('.view-region');
-  disposeCurrentView =
-    viewRoot && page.mount ? page.mount(viewRoot) : undefined;
+  if (!existingMap) {
+    disposeCurrentView =
+      viewRoot && page.mount ? page.mount(viewRoot) : undefined;
+  }
+  mountedView = activeView;
 }
 
 applyTheme();
-renderApp();
+let receivedLiveMessages = false;
+window.aprsbox.messages.onChanged((next) => {
+  receivedLiveMessages = true;
+  updateMessages(next);
+});
+void window.aprsbox.messages
+  .get()
+  .then((next) => {
+    if (!receivedLiveMessages) updateMessages(next);
+  })
+  .catch(console.error);
+let receivedLiveStations = false;
+window.aprsbox.stations.onChanged((stations) => {
+  receivedLiveStations = true;
+  receiveStations(stations);
+});
+void window.aprsbox.stations
+  .get()
+  .then((stations) => {
+    if (!receivedLiveStations) receiveStations(stations);
+  })
+  .catch(console.error);
 void loadConfiguration();
 void loadTraffic();

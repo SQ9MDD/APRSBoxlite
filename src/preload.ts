@@ -1,7 +1,45 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { Station, AprsMessage } from './types';
 
 contextBridge.exposeInMainWorld('aprsbox', {
+  messages: {
+    get: (): Promise<AprsMessage[]> => ipcRenderer.invoke('messages:get'),
+    send: (message: {
+      recipient: string;
+      text: string;
+      interfaceId: string;
+      path: string;
+    }): Promise<void> => ipcRenderer.invoke('messages:send', message),
+    retry: (id: string): Promise<void> =>
+      ipcRenderer.invoke('messages:retry', id),
+    onChanged: (callback: (messages: AprsMessage[]) => void): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        messages: AprsMessage[],
+      ) => callback(messages);
+      ipcRenderer.on('messages:changed', listener);
+      return () => ipcRenderer.removeListener('messages:changed', listener);
+    },
+  },
+  stations: {
+    get: (): Promise<Station[]> => ipcRenderer.invoke('stations:get'),
+    onChanged: (callback: (stations: Station[]) => void): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        stations: Station[],
+      ) => callback(stations);
+      ipcRenderer.on('stations:changed', listener);
+      return () => ipcRenderer.removeListener('stations:changed', listener);
+    },
+  },
   config: {
+    saveMapMask: (settings: { light: number; dark: number }) =>
+      ipcRenderer.invoke('config:save-map-mask', settings),
+    saveMapViewport: (viewport: {
+      latitude: number;
+      longitude: number;
+      zoom: number;
+    }) => ipcRenderer.invoke('config:save-map-viewport', viewport),
     getActivePath: (): Promise<{
       path: string;
       storage: 'portable' | 'userData';
@@ -16,8 +54,27 @@ contextBridge.exposeInMainWorld('aprsbox', {
       status: string;
       beaconInterval: string;
       statusInterval: string;
+      symbolTable: string;
+      symbolCode: string;
+      symbolOverlay: string;
+      beaconPath: string;
+      beaconInterfaceId: string;
     }): Promise<{ path: string; storage: 'portable' | 'userData' }> =>
       ipcRenderer.invoke('config:save-station', station),
+    sendBeacon: (station: {
+      callsign: string;
+      ssid: string;
+      location: string;
+      comment: string;
+      status: string;
+      beaconInterval: string;
+      statusInterval: string;
+      symbolTable: string;
+      symbolCode: string;
+      symbolOverlay: string;
+      beaconPath: string;
+      beaconInterfaceId: string;
+    }): Promise<void> => ipcRenderer.invoke('station:send-beacon', station),
     saveInterfaces: (
       interfaces: Array<{
         id: string;

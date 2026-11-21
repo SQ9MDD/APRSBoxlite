@@ -13,6 +13,7 @@ export interface KissTcpInterface {
   name: string;
   type: 'kiss-tcp' | 'kiss-serial';
   enabled: boolean;
+  txBlocked?: boolean;
   hostPort: string;
 }
 
@@ -117,6 +118,7 @@ export class KissTcpRxService {
   private readonly sockets = new Map<string, net.Socket>();
   private readonly statuses = new Map<string, ConnectionStatus>();
   private readonly configuredEndpoints = new Map<string, string>();
+  private readonly transmitAllowed = new Set<string>();
   private history: TrafficFrame[] = [];
   private readonly onFrame: (frame: TrafficFrame) => void;
   private readonly onStatus: (
@@ -133,6 +135,11 @@ export class KissTcpRxService {
   }
 
   configure(interfaces: KissTcpInterface[]): void {
+    this.transmitAllowed.clear();
+    for (const item of interfaces) {
+      if (item.enabled && item.type === 'kiss-tcp' && !item.txBlocked)
+        this.transmitAllowed.add(item.id);
+    }
     const targets = new Map(
       interfaces
         .filter((item) => item.enabled && item.type === 'kiss-tcp')
@@ -166,6 +173,21 @@ export class KissTcpRxService {
 
   getStatuses(): Record<string, ConnectionStatus> {
     return Object.fromEntries(this.statuses);
+  }
+
+  async transmit(interfaceId: string, frame: Uint8Array): Promise<void> {
+    const socket = this.sockets.get(interfaceId);
+    if (!this.transmitAllowed.has(interfaceId))
+      throw new Error('TX is blocked or the interface is disabled.');
+    if (
+      !socket ||
+      socket.destroyed ||
+      this.statuses.get(interfaceId) !== 'connected'
+    )
+      throw new Error('The selected KISS TCP interface is not connected.');
+    await new Promise<void>((resolve, reject) =>
+      socket.write(frame, (error) => (error ? reject(error) : resolve())),
+    );
   }
 
   stop(): void {

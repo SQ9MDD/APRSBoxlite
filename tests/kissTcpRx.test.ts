@@ -111,3 +111,59 @@ test('receives a fragmented KISS TCP frame', async (context) => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   assert.equal(received, 'SP5ABC-1>APRS:>TCP RX');
 });
+
+test('sends on the existing KISS TCP socket and respects TX block', async (context) => {
+  let resolveReceived: (frame: Buffer) => void = () => undefined;
+  const received = new Promise<Buffer>((resolve) => {
+    resolveReceived = resolve;
+  });
+  const server = net.createServer((socket) => {
+    socket.once('data', resolveReceived);
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') {
+      context.skip('The sandbox does not permit a local TCP listener.');
+      return;
+    }
+    throw error;
+  }
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  let connected: () => void = () => undefined;
+  const ready = new Promise<void>((resolve) => {
+    connected = resolve;
+  });
+  const service = new KissTcpRxService(
+    () => undefined,
+    (_id, status) => {
+      if (status === 'connected') connected();
+    },
+  );
+  const config = {
+    id: 'tcp',
+    name: 'TNC',
+    type: 'kiss-tcp' as const,
+    enabled: true,
+    txBlocked: true,
+    hostPort: `127.0.0.1:${address.port}`,
+  };
+  try {
+    service.configure([config]);
+    await ready;
+    await assert.rejects(
+      service.transmit('tcp', Uint8Array.from([0xc0, 0, 0xc0])),
+      /blocked/,
+    );
+    service.configure([{ ...config, txBlocked: false }]);
+    await service.transmit('tcp', Uint8Array.from([0xc0, 0, 0xc0]));
+    assert.deepEqual(await received, Buffer.from([0xc0, 0, 0xc0]));
+  } finally {
+    service.stop();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
