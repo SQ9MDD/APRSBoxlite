@@ -30,7 +30,7 @@ jobs:
         include:
           - os: macos-15
             artifact: macos-arm64
-          - os: windows-2025
+          - os: windows-latest
             artifact: windows-x64
           - os: ubuntu-24.04
             artifact: linux-x64
@@ -85,6 +85,26 @@ jobs:
         if: runner.os == 'Windows'
         run: npm run make:win
 
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed.' }
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-files | Out-Null
+          $source = (Resolve-Path 'out/APRSBOX-win32-x64').Path
+          if (-not (Test-Path (Join-Path $source 'APRSBOX.exe'))) { throw 'Packaged application executable not found.' }
+          $output = (Resolve-Path 'release-files').Path
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          & $compiler "/DAppVersion=$env:RELEASE_VERSION" "/DAppSource=$source" "/O$output" 'installer/windows/APRSBoxLite.iss'
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
+          if (-not (Test-Path "release-files/APRSBoxLite-$env:RELEASE_VERSION-Windows-x64-Setup.exe")) { throw 'Installer not found.' }
+
       - name: Archive Windows application directory
         if: runner.os == 'Windows'
         shell: pwsh
@@ -101,7 +121,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.artifact }}
-          path: release-files/*.zip
+          path: |
+            release-files/*.zip
+            release-files/*.exe
           if-no-files-found: error
           retention-days: 1
 
@@ -146,6 +168,7 @@ jobs:
           mapfile -d '' files < <(find release-files -type f -print0)
           test -f "release-files/APRSBoxLite-${RELEASE_VERSION}-macOS-arm64.zip"
           test -f "release-files/APRSBoxLite-${RELEASE_VERSION}-Windows-x64.zip"
+          test -f "release-files/APRSBoxLite-${RELEASE_VERSION}-Windows-x64-Setup.exe"
           find release-files -type f -name '*.deb' -print -quit | grep -q .
           find release-files -type f -name '*.rpm' -print -quit | grep -q .
 

@@ -1,3 +1,4 @@
+import { availableMessageInterfaces, sendMessageOnInterfaces } from './main/messageTransport';
 import { appendAprsIsGroups, readMessageGroups } from './messageGroups';
 import { defaultAprsIsFilter, validAprsIsFilter } from './aprsIsFilter';
 import { app, BrowserWindow, dialog, ipcMain, net, powerMonitor, protocol, session } from 'electron';
@@ -399,6 +400,16 @@ app.whenReady().then(async () => {
       ? kissSerialRxService.transmit(interfaceId, frame)
       : kissTcpRxService.transmit(interfaceId, frame);
   const kissStatuses = () => ({ ...kissTcpRxService.getStatuses(), ...kissSerialRxService.getStatuses(), ...kissBleRxService.getStatuses(), ...aprsIsRxService.getStatuses() });
+  const getAvailableMessageInterfaces = () => {
+    const interfaces = validateInterfaces(configStorage.getConfiguration().interfaces ?? []);
+    const statuses = kissStatuses();
+    return availableMessageInterfaces(interfaces, (item) => statuses[item.id] === 'connected' && (item.type !== 'aprs-is' || aprsIsRxService.canTransmit(item.id)));
+  };
+  const transmitMessage = async (interfaceId: string, frame: Uint8Array) => {
+    if (interfaceId) return transmitKiss(interfaceId, frame);
+    const failures = await sendMessageOnInterfaces(getAvailableMessageInterfaces(), frame, transmitKiss);
+    if (failures.length) console.warn('Message not sent on some interfaces:', failures.map(({ interface: item, error }) => `${item.name || item.id}: ${error}`).join('; '));
+  };
   const kissHistory = () => [...kissTcpRxService.getHistory(), ...kissSerialRxService.getHistory(), ...kissBleRxService.getHistory(), ...aprsIsRxService.getHistory()]
     .sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt)).slice(0, 1000);
   const notifyPower = (event: 'system:suspend' | 'system:resume') => {
@@ -425,7 +436,7 @@ app.whenReady().then(async () => {
         throw new Error('Configure and save My Station first.');
       return `${station.callsign}${station.ssid}`;
     },
-    transmitKiss,
+    transmitMessage,
     (messages) => {
       broadcast('messages:changed', messages);
       persistMessages(messages);
@@ -705,6 +716,7 @@ app.whenReady().then(async () => {
       typeof path !== 'string'
     )
       throw new Error('Invalid message.');
+    if (!interfaceId && !getAvailableMessageInterfaces().length) throw new Error('No connected transmit interface is available for the message.');
     return messageService.send(recipient, text, interfaceId, path);
   });
   ipcMain.handle('messages:mark-read', (_event, recipient: unknown) => {

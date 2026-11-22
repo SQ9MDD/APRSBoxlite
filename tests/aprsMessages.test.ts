@@ -392,3 +392,34 @@ test('separates RF and APRS-IS message groups without ACKs or query responses', 
     assert.equal(service.snapshot().some((message) => message.recipient === 'NINE12345'), false);
   } finally { service.dispose(); }
 });
+
+test('automatic sending uses one message number and a single ACK stops retries', async () => {
+  mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const transmissions: Array<{ id: string; frame: Uint8Array }> = [];
+  const service = new MessageService(() => 'SQ9MDD-4', async (id, frame) => {
+    for (const target of id ? [id] : ['radio', 'internet']) transmissions.push({ id: target, frame });
+  }, () => undefined);
+  try {
+    await service.send('SP8ABC', 'Hello', '', '');
+    assert.equal(transmissions.length, 2);
+    const decoded = transmissions.map(({ frame }) => new KissFrameDecoder().consume(frame)[0]);
+    assert.equal(decoded[0], decoded[1]);
+    const message = service.snapshot()[0];
+    assert.equal(message.interfaceId, '');
+    service.receive(`SP8ABC>APRS::SQ9MDD-4 :ack${message.number}`, 'internet');
+    assert.equal(service.snapshot()[0].status, 'acked');
+    mock.timers.tick(120_000);
+    assert.equal(transmissions.length, 2);
+  } finally { service.dispose(); mock.timers.reset(); }
+});
+
+test('automatic mode recognizes a group configured only for APRS-IS', async () => {
+  const groups = { rf: [], aprsIs: ['NINE12345'] };
+  const sent: Uint8Array[] = [];
+  const service = new MessageService(() => 'SQ9MDD-4', async (_id, frame) => { sent.push(frame); }, () => undefined, [], undefined, () => groups);
+  try {
+    await service.send('NINE12345', 'Group', '', '');
+    assert.match(new KissFrameDecoder().consume(sent[0])[0], /::NINE12345:Group$/);
+    assert.equal(service.snapshot()[0].number, undefined);
+  } finally { service.dispose(); }
+});

@@ -1005,7 +1005,7 @@ appRoot.addEventListener('submit', (event) => {
   const request = {
     recipient: messageRecipient,
     text: String(values.get('text') ?? ''),
-    interfaceId: String(values.get('interfaceId') ?? ''),
+    interfaceId: messageInterfaceId,
     path: String(values.get('path') ?? ''),
   };
   const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');

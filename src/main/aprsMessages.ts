@@ -199,7 +199,7 @@ export class MessageService {
     const source = normalizeCallsign(this.ownCallsign());
     const target = normalizeMessageAddress(recipient);
     const groups = this.groups();
-    const group = (this.isAprsIs(interfaceId) ? groups.aprsIs : groups.rf).includes(target);
+    const group = interfaceId ? (this.isAprsIs(interfaceId) ? groups.aprsIs : groups.rf).includes(target) : groups.rf.includes(target) || groups.aprsIs.includes(target);
     if (!group) normalizeCallsign(target);
     const body = text.trim();
     if (

@@ -53,3 +53,9 @@ test('renders separate RF and APRS-IS group settings and groups messages by addr
   assert.match(html, /data-message-conversation="LOCALTEST"/);
   assert.equal(isVisibleInConversation(message, 'LOCALTEST'), true);
 });
+
+test('offers automatic sending to all connected interfaces', () => {
+  const html = renderMessagesView([], 'SP5ABC', [], {}).html;
+  assert.match(html, /<option value="" selected>Automatic \(all connected TX interfaces\)<\/option>/);
+  assert.doesNotMatch(html, /<select name="interfaceId" required>/);
+});
