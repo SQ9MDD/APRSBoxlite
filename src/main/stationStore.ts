@@ -21,12 +21,13 @@ export class StationStore {
     const effectivePacket = unwrapAprsPacket(packet);
     if (!effectivePacket) return;
     const headerMatch = effectivePacket.match(
-      /^\s*([A-Z0-9]{1,6}(?:-\d{1,2})?)>\s*([^,:\s]+)(?:,([^:]*))?:/i,
+      /^\s*([A-Z0-9]{1,6}(?:-\d{1,2})?)>\s*([^,:]+)(?:,([^:]*))?:/i,
     );
     if (!headerMatch) return;
     const source = headerMatch[1].toUpperCase().replace(/-0$/, '');
     const callsign = position?.entityType ? position.callsign : source;
-    const destination = headerMatch[2].toUpperCase();
+    const destination = headerMatch[2].trim().toUpperCase();
+    if (!destination) return;
     const path = headerMatch[3] ?? '';
     const previous = this.stations.get(callsign);
     const device = identifyAprsDevice(destination, effectivePacket.slice(effectivePacket.indexOf(':') + 1)) ?? previous?.aprsDevice;

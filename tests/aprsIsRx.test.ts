@@ -115,7 +115,7 @@ test('gates eligible RF frames only when enabled and verified, with duplicate an
     service.forwardRf({ ...rf, packet: 'SP5ABC>APRS,OTHER*:>Hello' });
     service.forwardRf({ ...rf, source: 'aprs-is' });
     service.forwardRf({ ...rf, direction: 'tx' });
-    for (const packet of ['SP5ABC>APRS,NOGATE:>x', 'SP5ABC>APRS,RFONLY:>x', 'SP5ABC>APRS,TCPIP*:>x', 'SP5ABC>APRS,TCPIP1*:>x', 'SP5ABC>APRS,TCPXX-1:>x', 'SP5ABC>APRS,nogate*:>x', 'SP5ABC>APRS,RFONLY:}SP5XYZ>APRS:>inner', 'SP5ABC>APRS:}SP5XYZ>APRS,NOGATE:>inner', 'SP5ABC>APRS:}malformed', 'SP5ABC>APRS,qAR,OTHER:>x', 'SP5ABC>APRS:?APRS', 'SP5ABC>APRS:>bad\ufffd', 'SP5ABC>APRS:}SP5XYZ>APRS,TCPXX*:>x']) service.forwardRf({ ...rf, packet });
+    for (const packet of ['SP7FNU-4>RT 73,WIDE1-1:!5217.24N/02104.53Ej000/000RETEVIS RT 73', 'SP5ABC>APRS,NOGATE:>x', 'SP5ABC>APRS,RFONLY:>x', 'SP5ABC>APRS,TCPIP*:>x', 'SP5ABC>APRS,TCPIP1*:>x', 'SP5ABC>APRS,TCPXX-1:>x', 'SP5ABC>APRS,nogate*:>x', 'SP5ABC>APRS,RFONLY:}SP5XYZ>APRS:>inner', 'SP5ABC>APRS:}SP5XYZ>APRS,NOGATE:>inner', 'SP5ABC>APRS:}malformed', 'SP5ABC>APRS,qAR,OTHER:>x', 'SP5ABC>APRS:?APRS', 'SP5ABC>APRS:>bad\ufffd', 'SP5ABC>APRS:}SP5XYZ>APRS,TCPXX*:>x']) service.forwardRf({ ...rf, packet });
     assert.equal(socket.writes.length, 2);
     service.forwardRf({ ...rf, packet: 'SP5ABC>APRS:}SP5XYZ>APRS,WIDE1*:>inner' });
     assert.equal(socket.writes[2], 'SP5XYZ>APRS,WIDE1*,SP5ABC,qAO,SQ9MDD-15:>inner\r\n');

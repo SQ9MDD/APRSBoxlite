@@ -126,3 +126,25 @@ test('stores a wrapped position under its inner source', () => {
     assert.equal(station.sourceInterface, 'VHF');
   } finally { store.dispose(); }
 });
+
+test('displays received positions even when the destination contains a space', () => {
+  const store = new StationStore(() => undefined);
+  try {
+    store.receive('SP7FNU-4>RT 73,SR5NWA*,WIDE1*:!5217.44N/02104.70Ej000/037RETEVIS RT 73', 'DIGI');
+    let station = store.snapshot()[0];
+    assert.equal(station.callsign, 'SP7FNU-4');
+    assert.equal(station.destination, 'RT 73');
+    assert.equal(station.path, 'SR5NWA*,WIDE1*');
+    assert.equal(station.sourceInterface, 'DIGI');
+    assert.equal(station.latitude.toFixed(4), '52.2907');
+    assert.equal(station.longitude.toFixed(4), '21.0783');
+    assert.equal(station.symbol, '/j');
+    assert.equal(station.decoded?.speedKnots, 37);
+    store.receive('SP7FNU-4>RT 73,WIDE1-1:!5217.24N/02104.53Ej000/000RETEVIS RT 73', 'DIGI');
+    station = store.snapshot()[0];
+    assert.equal(store.snapshot().length, 1);
+    assert.equal(station.latitude.toFixed(4), '52.2873');
+    assert.equal(station.track.length, 2);
+    assert.equal(station.comment, '000/000RETEVIS RT 73');
+  } finally { store.dispose(); }
+});
