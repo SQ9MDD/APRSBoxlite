@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
-import {
-  MessageService,
-  encodeKissMessage,
-  parseAprsMessage,
-} from '../src/main/aprsMessages.ts';
+import { registerHooks } from 'node:module';
 import { KissFrameDecoder } from '../src/main/kissTcpRx.ts';
 import type { AprsMessage } from '../src/types.ts';
+
+registerHooks({
+  resolve(specifier, context, next) {
+    return next(specifier === '../aprsMessageControl' ? `${specifier}.ts` : specifier, context);
+  },
+});
+const { MessageService, encodeKissMessage, parseAprsMessage } = await import('../src/main/aprsMessages.ts');
 
 test('encodes APRS message into a KISS AX.25 UI frame', () => {
   const decoder = new KissFrameDecoder();
@@ -44,6 +47,9 @@ test('parses numbered messages and ACK/REJ reply acknowledgements', () => {
     'rej',
   );
   assert.equal(parseAprsMessage('SP8ABC-9>APRS:>status'), undefined);
+  assert.equal(parseAprsMessage('SP8ABC-9>APRS::SQ9MDD-8 :ack00   ')?.control, 'ack');
+  assert.equal(parseAprsMessage('SP8ABC-9>APRS::SQ9MDD-8 :ack00{AB')?.control, 'ack');
+  assert.equal(parseAprsMessage('SP8ABC-9>APRS::SQ9MDD-8 :AA:automatycza odp')?.text, 'AA:automatycza odp');
 });
 
 test('sends a numbered message and accepts only the matching peer ACK', async () => {
@@ -102,7 +108,7 @@ test('deduplicates numbered RX messages while ACKing retransmissions', async () 
   }
 });
 
-test('marks blocked transmission failed and expires messages from RAM', async () => {
+test('marks blocked transmission failed and keeps it after one hour', async () => {
   mock.timers.enable({
     apis: ['Date', 'setTimeout', 'setInterval'],
     now: 1000,
@@ -122,11 +128,24 @@ test('marks blocked transmission failed and expires messages from RAM', async ()
     assert.equal(snapshot[0].status, 'failed');
     assert.match(snapshot[0].error ?? '', /TX blocked/);
     mock.timers.tick(60 * 60 * 1000);
-    assert.equal(snapshot.length, 0);
+    assert.equal(service.snapshot().length, 1);
   } finally {
     service.dispose();
     mock.timers.reset();
   }
+});
+
+test('restores conversations without retransmitting pending messages', async () => {
+  const initial: AprsMessage[] = [{ id: 'pending', sender: 'SQ9MDD-8', recipient: 'SP8ABC-9', text: 'Hello', direction: 'tx', status: 'pending', number: '00', path: '', interfaceId: 'tcp', attempts: 1, createdAt: new Date().toISOString() }];
+  let transmissions = 0;
+  const service = new MessageService(() => 'SQ9MDD-8', async () => { transmissions++; }, () => undefined, initial);
+  try {
+    assert.equal(service.snapshot()[0].status, 'failed');
+    assert.match(service.snapshot()[0].error ?? '', /restart/);
+    assert.equal(transmissions, 0);
+    await service.send('SP8ABC-9', 'Another', 'tcp', '');
+    assert.equal(service.snapshot()[1].number, '01');
+  } finally { service.dispose(); }
 });
 
 test('retries after 8, 16 and 32 seconds, then fails after the final ACK wait', async () => {
@@ -157,6 +176,38 @@ test('retries after 8, 16 and 32 seconds, then fails after the final ACK wait', 
     mock.timers.tick(30000);
     assert.equal(snapshot[0].status, 'failed');
     assert.equal(snapshot[0].error, 'No ACK received.');
+  } finally {
+    service.dispose();
+    mock.timers.reset();
+  }
+});
+
+test('accepts the reported nine-character SSID ACK and stops retries despite repeated copies', async () => {
+  mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1000 });
+  const frames: Uint8Array[] = [];
+  let snapshot: AprsMessage[] = [];
+  const service = new MessageService(
+    () => 'SQ9MDD-15',
+    async (_id, frame) => { frames.push(frame); },
+    (messages) => { snapshot = messages; },
+  );
+  try {
+    await service.send('SQ5WPR-9', 'test', 'VHF', '');
+    assert.equal(new KissFrameDecoder().consume(frames[0])[0], 'SQ9MDD-15>APBOX1::SQ5WPR-9 :test{00');
+    mock.timers.tick(8000);
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(frames.length, 2);
+    service.receive('SQ5WPR-9>APK102,WIDE1-1,WIDE2-1::SQ9MDD-15:ack00', 'VHF');
+    assert.equal(snapshot[0].status, 'acked');
+    service.receive('SQ5WPR-9>APK102,SR5NWA*,WIDE1*,WIDE2-1::SQ9MDD-15:ack00', 'VHF');
+    service.receive('SQ5WPR-9>APK102,SQ5AAG-2*,WIDE1*,SR5NEB*::SQ9MDD-15:ack00', 'VHF');
+    service.receive('SQ5WPR-9>APK102::SQ9MDD-15:ack00{AB', 'VHF');
+    mock.timers.tick(90_000);
+    await Promise.resolve();
+    assert.equal(frames.length, 2);
+    assert.equal(snapshot[0].status, 'acked');
+    assert.equal(snapshot.length, 1);
   } finally {
     service.dispose();
     mock.timers.reset();

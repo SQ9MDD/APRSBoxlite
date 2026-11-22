@@ -160,10 +160,67 @@ test('sends on the existing KISS TCP socket and respects TX block', async (conte
       /blocked/,
     );
     service.configure([{ ...config, txBlocked: false }]);
-    await service.transmit('tcp', Uint8Array.from([0xc0, 0, 0xc0]));
-    assert.deepEqual(await received, Buffer.from([0xc0, 0, 0xc0]));
+    const frame = kissFrame(Buffer.concat([
+      ax25Address('APRS', 0, false), ax25Address('SP5ABC', 1, true),
+      Buffer.from([0x03, 0xf0]), Buffer.from('>Test TX'),
+    ]));
+    await service.transmit('tcp', frame);
+    assert.deepEqual(await received, frame);
+    assert.equal(service.getHistory()[0]?.direction, 'tx');
+    assert.equal(service.getHistory()[0]?.packet, 'SP5ABC-1>APRS:>Test TX');
   } finally {
     service.stop();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('reconnects after a dropped connection and after resume', async (context) => {
+  const connections: net.Socket[] = [];
+  const server = net.createServer((socket) => { connections.push(socket); });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') {
+      context.skip('The sandbox does not permit a local TCP listener.');
+      return;
+    }
+    throw error;
+  }
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  let count = 0;
+  let notify: (() => void) | undefined;
+  const service = new KissTcpRxService(() => undefined, (_id, status) => {
+    if (status === 'connected') {
+      count += 1;
+      notify?.();
+    }
+  });
+  const waitForConnection = (target: number) => new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Reconnect timed out')), 4000);
+    notify = () => {
+      if (count >= target) {
+        clearTimeout(timeout);
+        notify = undefined;
+        resolve();
+      }
+    };
+    notify();
+  });
+  try {
+    service.configure([{ id: 'tcp', name: 'TNC', type: 'kiss-tcp', enabled: true,
+      hostPort: `127.0.0.1:${address.port}`, reconnectTimeout: '1' }]);
+    await waitForConnection(1);
+    connections[0].destroy();
+    await waitForConnection(2);
+    service.reconnectAfterResume();
+    await waitForConnection(3);
+  } finally {
+    service.stop();
+    connections.forEach((socket) => socket.destroy());
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

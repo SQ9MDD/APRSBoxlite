@@ -1,6 +1,11 @@
 import { escapeHtml } from '../components/escapeHtml';
 import type { AprsMessage } from '../types';
 import type { InterfaceSettings } from './SettingsView';
+import { parseMessageControl } from '../aprsMessageControl';
+
+function visibleMessage(message: AprsMessage): boolean {
+  return message.direction !== 'rx' || !parseMessageControl(message.text);
+}
 
 function conversationFor(message: AprsMessage): string {
   return message.direction === 'tx'
@@ -15,7 +20,7 @@ export function renderMessageHistory(
   recipient: string | undefined,
 ): string {
   const items = messages.filter(
-    (message) => conversationFor(message) === recipient,
+    (message) => visibleMessage(message) && conversationFor(message) === recipient,
   );
   if (!items.length)
     return '<p class="messages-empty">No messages in this conversation.</p>';
@@ -42,7 +47,7 @@ export function renderMessagesView(
   statuses: Record<string, string>,
 ): { html: string } {
   const conversations = [
-    ...new Set([...messages].reverse().map(conversationFor)),
+    ...new Set([...messages].reverse().filter(visibleMessage).map(conversationFor)),
   ];
   if (recipient && !conversations.includes(recipient))
     conversations.unshift(recipient);

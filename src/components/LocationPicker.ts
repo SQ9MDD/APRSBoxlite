@@ -1,5 +1,8 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import type { MapSource } from '../mapSettings';
+import { mapTileUrl } from '../mapSettings';
+import { escapeHtml } from './escapeHtml';
 
 export interface Coordinates {
   latitude: number;
@@ -18,6 +21,7 @@ export function createLocationPicker(center: Coordinates): string {
 export function mountLocationPicker(
   element: ParentNode,
   initialCenter: Coordinates,
+  source: MapSource,
 ): MountedLocationPicker | undefined {
   const mapElement = element.querySelector<HTMLDivElement>(
     '#station-location-picker',
@@ -28,9 +32,9 @@ export function mountLocationPicker(
     zoomControl: true,
     attributionControl: true,
   }).setView([initialCenter.latitude, initialCenter.longitude], 15);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors',
+  L.tileLayer(mapTileUrl(source), {
+    maxZoom: 19, minZoom: source.minZoom, maxNativeZoom: source.maxZoom,
+    attribution: escapeHtml(source.attribution),
   }).addTo(map);
   const updateCenter = () => {
     if (label)

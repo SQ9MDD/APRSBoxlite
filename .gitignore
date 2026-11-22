@@ -145,4 +145,5 @@ vite.config.ts.timestamp-*
 # Electron-Forge
 out/
 config.json
+map-tiles/
 /reference

@@ -1,4 +1,5 @@
 import net from 'node:net';
+import type { TrafficCategory } from './trafficColors';
 
 const FEND = 0xc0;
 const FESC = 0xdb;
@@ -15,6 +16,7 @@ export interface KissTcpInterface {
   enabled: boolean;
   txBlocked?: boolean;
   hostPort: string;
+  reconnectTimeout?: string;
 }
 
 export interface TrafficFrame {
@@ -24,6 +26,8 @@ export interface TrafficFrame {
   interfaceName: string;
   packet: string;
   source: 'kiss';
+  direction: 'rx' | 'tx';
+  category?: TrafficCategory;
 }
 
 export type ConnectionStatus =
@@ -119,6 +123,8 @@ export class KissTcpRxService {
   private readonly statuses = new Map<string, ConnectionStatus>();
   private readonly configuredEndpoints = new Map<string, string>();
   private readonly transmitAllowed = new Set<string>();
+  private readonly targets = new Map<string, KissTcpInterface>();
+  private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private history: TrafficFrame[] = [];
   private readonly onFrame: (frame: TrafficFrame) => void;
   private readonly onStatus: (
@@ -145,6 +151,14 @@ export class KissTcpRxService {
         .filter((item) => item.enabled && item.type === 'kiss-tcp')
         .map((item) => [item.id, item]),
     );
+    this.targets.clear();
+    for (const [id, target] of targets) this.targets.set(id, target);
+    for (const [id, timer] of this.retryTimers) {
+      if (!targets.has(id)) {
+        clearTimeout(timer);
+        this.retryTimers.delete(id);
+      }
+    }
     for (const [id, socket] of this.sockets) {
       if (!targets.has(id)) {
         socket.destroy();
@@ -162,7 +176,7 @@ export class KissTcpRxService {
         this.sockets.delete(target.id);
         this.setStatus(target.id, 'disconnected');
       }
-      if (!this.sockets.has(target.id)) this.connect(target);
+      if (!this.sockets.has(target.id) && !this.retryTimers.has(target.id)) this.connect(target);
     }
   }
 
@@ -188,12 +202,30 @@ export class KissTcpRxService {
     await new Promise<void>((resolve, reject) =>
       socket.write(frame, (error) => (error ? reject(error) : resolve())),
     );
+    const packet = new KissFrameDecoder().consume(frame)[0];
+    const target = this.targets.get(interfaceId);
+    if (packet && target) this.addFrame({
+      id: crypto.randomUUID(), receivedAt: new Date().toISOString(), interfaceId,
+      interfaceName: target.name || target.hostPort, packet, source: 'kiss', direction: 'tx',
+    });
   }
 
   stop(): void {
+    this.targets.clear();
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear();
     for (const socket of this.sockets.values()) socket.destroy();
     this.sockets.clear();
     this.configuredEndpoints.clear();
+  }
+
+  reconnectAfterResume(): void {
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear();
+    for (const socket of this.sockets.values()) socket.destroy();
+    this.sockets.clear();
+    this.configuredEndpoints.clear();
+    for (const target of this.targets.values()) this.connect(target);
   }
 
   private connect(configuration: KissTcpInterface): void {
@@ -207,8 +239,15 @@ export class KissTcpRxService {
     this.sockets.set(configuration.id, socket);
     this.configuredEndpoints.set(configuration.id, configuration.hostPort);
     this.setStatus(configuration.id, 'connecting');
-    socket.on('connect', () => this.setStatus(configuration.id, 'connected'));
+    socket.setTimeout(10_000);
+    socket.on('timeout', () => socket.destroy());
+    socket.on('connect', () => {
+      socket.setTimeout(0);
+      if (this.sockets.get(configuration.id) === socket)
+        this.setStatus(configuration.id, 'connected');
+    });
     socket.on('data', (chunk: Buffer) => {
+      if (this.sockets.get(configuration.id) !== socket) return;
       for (const packet of decoder.consume(chunk)) {
         const frame: TrafficFrame = {
           id: crypto.randomUUID(),
@@ -217,17 +256,34 @@ export class KissTcpRxService {
           interfaceName: configuration.name || configuration.hostPort,
           packet,
           source: 'kiss',
+          direction: 'rx',
         };
         this.addFrame(frame);
       }
     });
-    socket.on('error', () => this.setStatus(configuration.id, 'error'));
+    socket.on('error', () => {
+      if (this.sockets.get(configuration.id) === socket)
+        this.setStatus(configuration.id, 'error');
+    });
     socket.on('close', () => {
       if (this.sockets.get(configuration.id) === socket) {
         this.sockets.delete(configuration.id);
         this.configuredEndpoints.delete(configuration.id);
         if (this.statuses.get(configuration.id) !== 'error') {
           this.setStatus(configuration.id, 'disconnected');
+        }
+        const target = this.targets.get(configuration.id);
+        if (target) {
+          const seconds = Number(target.reconnectTimeout);
+          const delay = Number.isFinite(seconds) && seconds > 0
+            ? Math.min(seconds, 3600) * 1000 : 5000;
+          const timer = setTimeout(() => {
+            this.retryTimers.delete(configuration.id);
+            const current = this.targets.get(configuration.id);
+            if (current && !this.sockets.has(current.id)) this.connect(current);
+          }, delay);
+          timer.unref();
+          this.retryTimers.set(configuration.id, timer);
         }
       }
     });

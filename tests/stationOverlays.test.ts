@@ -66,6 +66,7 @@ test('refreshes reception details without extending the lifetime of a position',
     );
     const original = snapshot[0];
     assert.equal(original.aprsClient, 'DireWolf');
+    assert.equal(original.aprsDevice?.vendor, 'WB2OSZ');
     assert.equal(original.decoded?.courseDegrees, 243);
     mock.timers.tick(STATION_AGE_MS - 1000);
     store.receive('SP8ABC-9>APDW16,SR9ABC*:>Status', 'TNC 2');
@@ -73,6 +74,7 @@ test('refreshes reception details without extending the lifetime of a position',
     assert.equal(snapshot[0].path, 'SR9ABC*');
     assert.equal(snapshot[0].latitude, original.latitude);
     assert.equal(snapshot[0].positionReceivedAt, original.positionReceivedAt);
+    assert.equal(snapshot[0].aprsDevice?.actualIdentifier, 'APDW16');
     mock.timers.tick(1000);
     assert.equal(snapshot.length, 0);
     store.dispose();

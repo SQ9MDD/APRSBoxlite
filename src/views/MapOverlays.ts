@@ -10,7 +10,7 @@ function colorFor(callsign: string): string {
 }
 
 // APRSBox uses a circle for omnidirectional PHG and a cardioid for directional PHG.
-function coverage(station: Station): L.Layer | undefined {
+function coverage(station: Station, fillOpacity: number): L.Layer | undefined {
   if (!station.phg || station.phg.rangeKm <= 0) return undefined;
   const { rangeKm, direction } = station.phg;
   const color = colorFor(station.callsign);
@@ -18,7 +18,7 @@ function coverage(station: Station): L.Layer | undefined {
     color,
     weight: 1.5,
     opacity: 1,
-    fillOpacity: 0.05,
+    fillOpacity,
     interactive: false,
   };
   const radius = rangeKm * 1000;
@@ -96,7 +96,7 @@ function locator(
   return result;
 }
 
-export function createMapOverlays(map: L.Map) {
+export function createMapOverlays(map: L.Map, fillOpacity = 0.05) {
   const tracks = L.layerGroup().addTo(map);
   const coverages = L.layerGroup().addTo(map);
   const grid = L.layerGroup().addTo(map);
@@ -133,7 +133,7 @@ export function createMapOverlays(map: L.Map) {
         }).addTo(tracks);
       }
       if (visibility.coverage) {
-        const layer = coverage(station);
+        const layer = coverage(station, fillOpacity);
         if (layer) layer.addTo(coverages);
       }
     }

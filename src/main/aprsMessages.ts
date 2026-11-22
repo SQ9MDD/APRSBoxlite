@@ -1,9 +1,10 @@
 import type { AprsMessage } from '../types';
+import { parseMessageControl } from '../aprsMessageControl';
 
 const CALLSIGN = /^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/;
 const GROUPS = new Set(['ALL', 'QST', 'CQ']);
 const RETRY_DELAYS = [8_000, 16_000, 32_000];
-const MAX_AGE = 60 * 60 * 1000;
+const DEDUPLICATION_AGE = 60 * 60 * 1000;
 const MAX_MESSAGES = 1000;
 
 export function normalizeCallsign(value: string): string {
@@ -78,19 +79,24 @@ export function parseAprsMessage(packet: string):
   }
   const addressee = header[2].trim().toUpperCase().replace(/-0$/, '');
   const field = header[3];
-  const control = field.match(/^(ack|rej)([A-Z0-9]{1,5})(?:}[A-Z0-9]{0,5})?$/i);
+  const control = parseMessageControl(field);
   if (control)
     return {
       sender,
       addressee,
       text: '',
-      number: control[2].toUpperCase(),
-      control: control[1].toLowerCase() as 'ack' | 'rej',
+      number: control.number,
+      control: control.control,
     };
   const message = field.match(
     /^(.*?)(?:\{([A-Z0-9]{1,5})(?:}([A-Z0-9]{0,5}))?)?$/is,
   );
   if (!message || !message[1]) return undefined;
+  const numberedControl = parseMessageControl(message[1]);
+  if (numberedControl) return {
+    sender, addressee, text: '', number: numberedControl.number,
+    control: numberedControl.control,
+  };
   return {
     sender,
     addressee,
@@ -105,7 +111,6 @@ export class MessageService {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private acknowledgements = new Set<ReturnType<typeof setTimeout>>();
   private nextNumber = 0;
-  private cleanup: ReturnType<typeof setInterval>;
   private readonly ownCallsign: () => string;
   private readonly transmit: (
     interfaceId: string,
@@ -117,19 +122,20 @@ export class MessageService {
     ownCallsign: () => string,
     transmit: (interfaceId: string, frame: Uint8Array) => Promise<void>,
     onChange: (messages: AprsMessage[]) => void,
+    initialMessages: AprsMessage[] = [],
   ) {
     this.ownCallsign = ownCallsign;
     this.transmit = transmit;
     this.onChange = onChange;
-    this.cleanup = setInterval(() => this.publish(), 30_000);
-    this.cleanup.unref();
+    this.messages = structuredClone(initialMessages.slice(-MAX_MESSAGES)).map((message) =>
+      message.status === 'pending'
+        ? { ...message, status: 'failed', error: 'Interrupted by application restart. Retry if needed.' }
+        : message,
+    );
   }
 
   snapshot(): AprsMessage[] {
-    const cutoff = Date.now() - MAX_AGE;
-    return structuredClone(
-      this.messages.filter((message) => Date.parse(message.createdAt) > cutoff),
-    );
+    return structuredClone(this.messages);
   }
 
   async send(
@@ -198,6 +204,7 @@ export class MessageService {
     const duplicate = this.messages.some(
       (message) =>
         message.direction === 'rx' &&
+        Date.now() - Date.parse(message.createdAt) < DEDUPLICATION_AGE &&
         message.sender === parsed.sender &&
         message.recipient === parsed.addressee &&
         (parsed.number
@@ -263,7 +270,6 @@ export class MessageService {
   }
 
   dispose(): void {
-    clearInterval(this.cleanup);
     for (const timer of this.timers.values()) clearTimeout(timer);
     for (const timer of this.acknowledgements) clearTimeout(timer);
     this.timers.clear();
@@ -283,7 +289,7 @@ export class MessageService {
             message.direction === 'tx' &&
             message.recipient === recipient &&
             message.number === number &&
-            message.status === 'pending',
+            (message.status === 'pending' || Date.now() - Date.parse(message.createdAt) < DEDUPLICATION_AGE),
         )
       )
         return number;
@@ -333,7 +339,7 @@ export class MessageService {
     number: string,
     control: 'ack' | 'rej',
   ): void {
-    const message = this.messages.find(
+    const message = this.messages.findLast(
       (item) =>
         item.direction === 'tx' &&
         item.recipient === sender &&
@@ -349,13 +355,6 @@ export class MessageService {
   }
 
   private publish(): void {
-    const cutoff = Date.now() - MAX_AGE;
-    this.messages = this.messages.filter((message) => {
-      if (Date.parse(message.createdAt) > cutoff) return true;
-      clearTimeout(this.timers.get(message.id));
-      this.timers.delete(message.id);
-      return false;
-    });
     while (this.messages.length > MAX_MESSAGES) {
       const removed = this.messages.shift()!;
       clearTimeout(this.timers.get(removed.id));

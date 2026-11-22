@@ -15,10 +15,14 @@ import darkThemeIcon from './icons/weather-night.svg';
 import lightThemeIcon from './icons/weather-sunny.svg';
 import systemThemeIcon from './icons/brightness-auto.svg';
 import beaconIcon from './icons/access-point.svg';
+import paletteIcon from './icons/palette-swatch-outline.svg';
+import saveIcon from './icons/content-save-outline.svg';
 import generalSettingsIcon from './icons/cog.svg';
 import stationSettingsIcon from './icons/antenna.svg';
 import interfacesSettingsIcon from './icons/radio-handheld.svg';
 import type { AppView } from '../types';
+import type { InterfaceSettings, InterfaceConnectionStatus } from '../views/SettingsView';
+import { escapeHtml } from './escapeHtml';
 
 export type MapToolId =
   | 'tracks'
@@ -88,6 +92,18 @@ const settingsControls: Array<{
   { id: 'interfaces', label: 'Interfaces', icon: interfacesSettingsIcon },
 ];
 
+export function renderInterfaceStatusDots(
+  interfaces: InterfaceSettings[],
+  statuses: Record<string, InterfaceConnectionStatus>,
+): string {
+  return interfaces.map((item) => {
+    const status = !item.enabled ? 'disabled' : item.type === 'kiss-serial' ? 'unsupported' : statuses[item.id] ?? 'disconnected';
+    const name = item.name || (item.type === 'kiss-tcp' ? item.hostPort : item.serialDevice) || item.id;
+    const label = `${name} · ${item.type === 'kiss-tcp' ? 'KISS TCP' : 'KISS Serial'} · ${status === 'unsupported' ? 'not supported' : status}`;
+    return `<span class="topbar-interface-dot is-${status}" role="img" tabindex="0" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}"></span>`;
+  }).join('');
+}
+
 export function createTopbar(
   view: AppView,
   tools: MapToolState,
@@ -95,6 +111,11 @@ export function createTopbar(
   settingsSection: SettingsToolbarSection,
   stationLabel: string,
   mapMaskOpacity: number,
+  stationFilters: string,
+  interfaces: InterfaceSettings[],
+  statuses: Record<string, InterfaceConnectionStatus>,
+  trafficFilter: string,
+  stationSearch: string,
 ): string {
   const themeIcons: Record<ThemeMode, string> = {
     light: lightThemeIcon,
@@ -117,5 +138,5 @@ export function createTopbar(
     view === 'settings'
       ? `<div class="settings-manipulators" aria-label="Settings sections">${settingsControls.map((control) => `<button class="map-tool ${settingsSection === control.id ? 'is-active' : ''}" data-settings-section="${control.id}" type="button" aria-pressed="${settingsSection === control.id}" aria-label="${control.label}" title="${control.label}"><img src="${control.icon}" alt="" /></button>`).join('')}</div>`
       : '';
-  return `<header class="topbar">${mapToolbar}${settingsToolbar}<div class="topbar-account"><span class="topbar-callsign"><span class="status-dot"></span>${stationLabel}</span><button class="theme-toggle" data-action="send-beacon" type="button" aria-label="Send beacon" title="Send beacon"><img src="${beaconIcon}" alt="" /></button><div class="theme-control"><button class="theme-toggle" data-action="cycle-theme" type="button" aria-label="Change color theme (current: ${themeMode})" title="Theme: ${themeMode}"><img src="${themeIcons[themeMode]}" alt="" /></button></div></div></header>`;
+  return `<header class="topbar">${mapToolbar}${settingsToolbar}${view === 'stations' ? `<div class="stations-filters" aria-label="Station filters">${stationFilters}</div><div class="stations-search-container">${stationSearch}</div>` : ''}${view === 'traffic' ? `<button class="map-tool" data-action="traffic-legend" type="button" title="Traffic colors" aria-label="Traffic colors" aria-haspopup="dialog"><img src="${paletteIcon}" alt=""></button><button class="map-tool" data-action="save-traffic-log" type="button" title="Save traffic log" aria-label="Save traffic log"><img src="${saveIcon}" alt=""></button>${trafficFilter}` : ''}<div class="topbar-account"><span class="topbar-callsign">${escapeHtml(stationLabel)}</span><span class="topbar-interfaces" aria-label="Interface status">${renderInterfaceStatusDots(interfaces, statuses)}</span><button class="theme-toggle" data-action="send-beacon" type="button" aria-label="Send beacon" title="Send beacon"><img src="${beaconIcon}" alt="" /></button><div class="theme-control"><button class="theme-toggle" data-action="cycle-theme" type="button" aria-label="Change color theme (current: ${themeMode})" title="Theme: ${themeMode}"><img src="${themeIcons[themeMode]}" alt="" /></button></div></div></header>`;
 }

@@ -76,6 +76,7 @@ export function renderPacketRows(
   const cutoff = Date.now() - 60 * 60 * 1000;
   const rows: string[] = [];
   for (const frame of frames) {
+    if (frame.direction !== 'rx') continue;
     if (Date.parse(frame.receivedAt) <= cutoff) continue;
     const parsed = parseFrame(frame.packet, ownCallsign);
     if (!parsed) continue;

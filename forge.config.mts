@@ -10,6 +10,11 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    name: 'APRSBOX',
+    icon: './assets/aprsbox',
+    extraResource: ['./assets/aprsbox.png'],
+    appBundleId: 'com.electron.aprsbox-lite',
+    win32metadata: { ProductName: 'APRSBOX', FileDescription: 'APRSBOX' },
     extendInfo: {
       NSLocationUsageDescription:
         'APRSBox Lite uses your location to set your station position.',

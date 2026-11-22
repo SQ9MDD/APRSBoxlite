@@ -1,6 +1,17 @@
 import type { Station } from '../types';
 import type { Coordinates } from '../components/LocationPicker';
 
+export function stationDistanceKm(station: Station, ownPosition?: Coordinates): number | undefined {
+  if (!ownPosition) return undefined;
+  const rad = Math.PI / 180;
+  const latitude = (station.latitude - ownPosition.latitude) * rad;
+  const longitude = (station.longitude - ownPosition.longitude) * rad;
+  const haversine = Math.sin(latitude / 2) ** 2 +
+    Math.cos(ownPosition.latitude * rad) * Math.cos(station.latitude * rad) *
+      Math.sin(longitude / 2) ** 2;
+  return 12742 * Math.atan2(Math.sqrt(haversine), Math.sqrt(Math.max(0, 1 - haversine)));
+}
+
 export function stationFields(
   station: Station,
   ownPosition?: Coordinates,
@@ -10,6 +21,16 @@ export function stationFields(
     if (value) fields.push([label, value]);
   };
   add('APRS client', station.aprsClient);
+  const device = station.aprsDevice;
+  if (device) {
+    add(device.identifierKind === 'tocall' ? 'TOCALL' : 'Mic-E', device.actualIdentifier);
+    add('Vendor', device.vendor);
+    add('Model', device.model);
+    add('Class', device.classLabel);
+    add('Class description', device.classDescription);
+    add('OS', device.os);
+    add('Capabilities', device.features.join(', '));
+  }
   add('Last activity', new Date(station.lastHeard).toLocaleString());
   add('Interface', station.sourceInterface);
   add('Destination', station.destination);
@@ -28,14 +49,7 @@ export function stationFields(
     const a = ownPosition.latitude * rad;
     const b = station.latitude * rad;
     const longitude = (station.longitude - ownPosition.longitude) * rad;
-    const deltaLatitude = b - a;
-    const haversine =
-      Math.sin(deltaLatitude / 2) ** 2 +
-      Math.cos(a) * Math.cos(b) * Math.sin(longitude / 2) ** 2;
-    const distance =
-      6371 *
-      2 *
-      Math.atan2(Math.sqrt(haversine), Math.sqrt(Math.max(0, 1 - haversine)));
+    const distance = stationDistanceKm(station, ownPosition)!;
     const bearing =
       (Math.atan2(
         Math.sin(longitude) * Math.cos(b),

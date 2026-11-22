@@ -2,6 +2,18 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { Station, AprsMessage } from './types';
 
 contextBridge.exposeInMainWorld('aprsbox', {
+  system: {
+    onSuspend: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('system:suspend', listener);
+      return () => ipcRenderer.removeListener('system:suspend', listener);
+    },
+    onResume: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('system:resume', listener);
+      return () => ipcRenderer.removeListener('system:resume', listener);
+    },
+  },
   messages: {
     get: (): Promise<AprsMessage[]> => ipcRenderer.invoke('messages:get'),
     send: (message: {
@@ -33,6 +45,12 @@ contextBridge.exposeInMainWorld('aprsbox', {
     },
   },
   config: {
+    getMapCacheStats: (id: string): Promise<{ count: number; bytes: number }> => ipcRenderer.invoke('map:cache-stats', id),
+    clearMapCache: (id: string): Promise<void> => ipcRenderer.invoke('map:clear-cache', id),
+    saveMapSettings: (settings: import('./mapSettings').MapSettings) => ipcRenderer.invoke('config:save-map-settings', settings),
+    exportBackup: (): Promise<boolean> => ipcRenderer.invoke('config:export-backup'),
+    importBackup: (): Promise<boolean> => ipcRenderer.invoke('config:import-backup'),
+    saveScrollerVisibility: (visible: boolean) => ipcRenderer.invoke('config:save-scroller-visibility', visible),
     saveMapMask: (settings: { light: number; dark: number }) =>
       ipcRenderer.invoke('config:save-map-mask', settings),
     saveMapViewport: (viewport: {
@@ -91,6 +109,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
       ipcRenderer.invoke('config:save-interfaces', interfaces),
   },
   traffic: {
+    saveLog: (filter: string): Promise<boolean> => ipcRenderer.invoke('traffic:save-log', filter),
     getRecent: (): Promise<
       Array<{
         id: string;
@@ -99,6 +118,8 @@ contextBridge.exposeInMainWorld('aprsbox', {
         interfaceName: string;
         packet: string;
         source: 'kiss';
+        direction: 'rx' | 'tx';
+        category?: 'own-beacon' | 'own-weather' | 'own-message';
       }>
     > => ipcRenderer.invoke('traffic:get-recent'),
     getInterfaceStatuses: (): Promise<
@@ -112,6 +133,8 @@ contextBridge.exposeInMainWorld('aprsbox', {
         interfaceName: string;
         packet: string;
         source: 'kiss';
+        direction: 'rx' | 'tx';
+        category?: 'own-beacon' | 'own-weather' | 'own-message';
       }) => void,
     ): (() => void) => {
       const listener = (

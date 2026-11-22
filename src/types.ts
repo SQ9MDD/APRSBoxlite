@@ -43,6 +43,19 @@ export interface AprsDecodedData {
   };
 }
 
+export interface AprsDevice {
+  identifierKind: 'tocall' | 'mic-e';
+  actualIdentifier: string;
+  matchedPattern: string;
+  identifiedAs: string;
+  vendor?: string;
+  model?: string;
+  classLabel?: string;
+  classDescription?: string;
+  os?: string;
+  features: string[];
+}
+
 export interface Station {
   callsign: string;
   name: string;
@@ -56,6 +69,7 @@ export interface Station {
   speed?: string;
   symbol: string;
   aprsClient?: string;
+  aprsDevice?: AprsDevice;
   destination?: string;
   path?: string;
   sourceInterface?: string;

@@ -13,9 +13,9 @@ import type {
   MountedLocationPicker,
 } from './components/LocationPicker';
 import { createSidebar } from './components/Sidebar';
-import { createTopbar } from './components/Topbar';
+import { createTopbar, renderInterfaceStatusDots } from './components/Topbar';
 import type { MapToolId, MapToolState, ThemeMode } from './components/Topbar';
-import { createRightPanel, renderLastPacket } from './components/RightPanel';
+import { createRightPanel, renderLastPacket, renderScrollerStation } from './components/RightPanel';
 import { renderPacketRows } from './components/PacketScroller';
 import { renderMapView } from './views/MapView';
 import type { MapViewport } from './views/MapView';
@@ -28,10 +28,15 @@ import {
   type SettingsSection,
   type StationSettings,
 } from './views/SettingsView';
-import { renderStationDetails, renderStationsView } from './views/StationsView';
-import { renderTrafficMonitorView } from './views/TrafficMonitorView';
+import { renderStationDetails, renderStationFilters, renderStationSearch, renderStationsView } from './views/StationsView';
+import { filterStations } from './views/stationSearch';
+import { mountStationDetailMap } from './views/StationDetailMap';
+import type { StationFilter, StationSort, StationsViewState } from './views/StationsView';
+import { filterTrafficFrames, renderTrafficEntries, renderTrafficFilter, renderTrafficMonitorView } from './views/TrafficMonitorView';
 import type { TrafficMonitorFrame } from './views/TrafficMonitorView';
 import type { AppView, Station, AprsMessage } from './types';
+import { activeMapSource, DEFAULT_MAP_SETTINGS, validateMapSettings } from './mapSettings';
+import type { MapSettings, MapSource } from './mapSettings';
 
 const root = document.querySelector<HTMLDivElement>('#app');
 
@@ -42,11 +47,15 @@ const appRoot = root;
 let activeView: AppView = 'map';
 let selectedCallsign: string | undefined;
 let detailCallsign: string | undefined;
+const stationsViewState: StationsViewState = { filter: 'all', sort: 'lastHeard', direction: 'desc', search: '' };
 let messageRecipient: string | undefined;
 let messages: AprsMessage[] = [];
 let liveStations: Station[] = [];
 let updateStationMarkers: ((stations: Station[]) => void) | undefined;
+let updateDetailMap: ((station: Station) => void) | undefined;
 let mapViewport: MapViewport | undefined;
+let mapSettings: MapSettings = structuredClone(DEFAULT_MAP_SETTINGS);
+let mapSourceDraft: MapSource | undefined;
 const rulerState: RulerState = { measurementActive: false };
 let mountedView: AppView | undefined;
 let activeSettingsSection: SettingsSection = 'general';
@@ -79,6 +88,9 @@ let locationPickerOpen = false;
 let locationPickerCenter: Coordinates | undefined;
 let mountedLocationPicker: MountedLocationPicker | undefined;
 let trafficFrames: TrafficMonitorFrame[] = [];
+let trafficLegendOpen = false;
+let savingTrafficLog = false;
+let trafficFilter = '';
 let interfaceStatuses: Record<
   string,
   'connecting' | 'connected' | 'disconnected' | 'error'
@@ -93,10 +105,13 @@ const mapTools: MapToolState = {
   tracks: true,
   coverage: true,
   packet: true,
-  scroller: false,
+  scroller: true,
   ruler: false,
   grid: false,
 };
+let scrollerVisibilityChanged = false;
+let scrollerChangeRevision = 0;
+let scrollerBeforeSleep: { visible: boolean; revision: number } | undefined;
 let disposeCurrentView: (() => void) | undefined;
 
 const colorScheme = window.matchMedia('(prefers-color-scheme: dark)');
@@ -226,9 +241,46 @@ function isInterfaceSettings(value: unknown): value is InterfaceSettings {
   );
 }
 
+async function saveMapSettings(value: MapSettings, clearDraft = false): Promise<void> {
+  try {
+    const validated = validateMapSettings(value);
+    await window.aprsbox.config.saveMapSettings(validated);
+    mapSettings = validated;
+    if (clearDraft) mapSourceDraft = undefined;
+    alertMessage = { title: 'Map settings saved', message: 'Map settings were saved.', tone: 'success' };
+  } catch (error) {
+    alertMessage = { title: 'Map settings not saved', message: error instanceof Error ? error.message : String(error), tone: 'error' };
+  }
+  renderApp();
+}
+
+const mapCacheStatsRequests = new Map<string, number>();
+async function updateMapCacheStats(id: string): Promise<void> {
+  const revision = (mapCacheStatsRequests.get(id) ?? 0) + 1;
+  mapCacheStatsRequests.set(id, revision);
+  const label = () => [...appRoot.querySelectorAll<HTMLElement>('[data-cache-count]')]
+    .find((element) => element.dataset.cacheCount === id);
+  try {
+    const stats = await window.aprsbox.config.getMapCacheStats(id);
+    if (mapCacheStatsRequests.get(id) !== revision) return;
+    const target = label();
+    if (target) target.textContent = `${stats.count} tiles · ${stats.bytes >= 1048576 ? `${(stats.bytes / 1048576).toFixed(1)} MB` : stats.bytes >= 1024 ? `${(stats.bytes / 1024).toFixed(1)} KB` : `${stats.bytes} B`}`;
+  } catch {
+    if (mapCacheStatsRequests.get(id) === revision) {
+      const target = label();
+      if (target) target.textContent = 'Cache unavailable';
+    }
+  }
+}
+
 async function loadConfiguration(): Promise<void> {
   try {
     const configuration = await window.aprsbox.config.get();
+    if (configuration.mapSettings !== undefined) {
+      try { mapSettings = validateMapSettings(configuration.mapSettings); } catch { /* Keep the default source if saved settings are invalid. */ }
+    }
+    if (!scrollerVisibilityChanged && typeof configuration.scrollerVisible === 'boolean')
+      mapTools.scroller = configuration.scrollerVisible;
     const mask = configuration.mapMaskOpacity as
       | Record<string, unknown>
       | undefined;
@@ -285,15 +337,17 @@ async function loadTraffic(): Promise<void> {
       .sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt))
       .slice(0, 1000);
     interfaceStatuses = { ...statuses, ...interfaceStatuses };
+    updateTopbarInterfaceStatuses();
     const packetBox = appRoot.querySelector('.last-heard-packet');
     if (packetBox)
       packetBox.outerHTML = renderLastPacket(
-        trafficFrames[0],
+        trafficFrames.find((frame) => frame.direction === 'rx'),
         liveStations,
         parseCoordinates(stationSettings.location),
       );
     refreshPacketScroller();
-    if (activeView === 'traffic' || activeView === 'settings') renderApp();
+    if (activeView === 'traffic') refreshTrafficMonitor();
+    else if (activeView === 'settings') renderApp();
   } catch {
     // Traffic is live-only; an unavailable Main Process leaves the monitor empty.
   }
@@ -302,19 +356,32 @@ async function loadTraffic(): Promise<void> {
 window.aprsbox.traffic.onReceived((frame) => {
   trafficFrames = [frame, ...trafficFrames].slice(0, 1_000);
   const packetBox = appRoot.querySelector('.last-heard-packet');
-  if (packetBox)
+  if (packetBox && frame.direction === 'rx')
     packetBox.outerHTML = renderLastPacket(
       frame,
       liveStations,
       parseCoordinates(stationSettings.location),
     );
   refreshPacketScroller();
-  if (activeView === 'traffic') renderApp();
+  if (activeView === 'traffic') refreshTrafficMonitor();
 });
+
+function refreshTrafficMonitor(): void {
+  const table = appRoot.querySelector<HTMLElement>('.traffic-table');
+  if (!table) return;
+  const top = table.scrollTop;
+  table.innerHTML = renderTrafficEntries(trafficFrames, trafficFilter);
+  table.scrollTop = top;
+  const count = appRoot.querySelector<HTMLElement>('[data-traffic-count]');
+  if (count) count.textContent = `${filterTrafficFrames(trafficFrames, trafficFilter).length} entries`;
+  const clear = appRoot.querySelector<HTMLButtonElement>('[data-action="clear-traffic-filter"]');
+  if (clear) clear.disabled = !trafficFilter.trim();
+}
 
 window.aprsbox.traffic.onInterfaceStatus(({ interfaceId, status }) => {
   interfaceStatuses = { ...interfaceStatuses, [interfaceId]: status };
-  if (activeView === 'settings') renderApp();
+  updateTopbarInterfaceStatuses();
+  if (activeView === 'settings' && activeSettingsSection !== 'general') renderApp();
   if (activeView === 'messages') {
     const option = [
       ...appRoot.querySelectorAll<HTMLOptionElement>(
@@ -328,6 +395,11 @@ window.aprsbox.traffic.onInterfaceStatus(({ interfaceId, status }) => {
     }
   }
 });
+
+function updateTopbarInterfaceStatuses(): void {
+  const container = appRoot.querySelector<HTMLElement>('.topbar-interfaces');
+  if (container) container.innerHTML = renderInterfaceStatusDots(interfaces, interfaceStatuses);
+}
 
 colorScheme.addEventListener('change', () => {
   if (themeMode === 'system') {
@@ -350,6 +422,7 @@ const pageRenderers: Record<
         };
       },
       viewport: mapViewport,
+      mapSettings,
       rulerState,
       ownPosition: () => parseCoordinates(stationSettings.location),
       onStationAction: (action, callsign) => {
@@ -385,14 +458,19 @@ const pageRenderers: Record<
     const station = liveStations.find(
       (item) => item.callsign === detailCallsign,
     );
-    return station
-      ? renderStationDetails(
-          station,
-          parseCoordinates(stationSettings.location),
-        )
-      : renderStationsView(liveStations);
+    if (!station) return renderStationsView(liveStations, parseCoordinates(stationSettings.location), stationsViewState);
+    return {
+      ...renderStationDetails(station, parseCoordinates(stationSettings.location), trafficFrames, liveStations),
+      mount: (element: HTMLElement) => {
+        const mapElement = element.querySelector<HTMLElement>('.station-detail-map');
+        if (!mapElement) return () => undefined;
+        const map = mountStationDetailMap(mapElement, station, activeMapSource(mapSettings));
+        updateDetailMap = map.update;
+        return () => { updateDetailMap = undefined; map.dispose(); };
+      },
+    };
   },
-  traffic: () => renderTrafficMonitorView(trafficFrames),
+  traffic: () => renderTrafficMonitorView(trafficFrames, trafficLegendOpen, trafficFilter),
   messages: () =>
     renderMessagesView(
       messages,
@@ -411,6 +489,8 @@ const pageRenderers: Record<
       locationAccuracy,
       phgCalculatorOpen,
       phgValues,
+      mapSettings,
+      mapSourceDraft,
     ),
 };
 
@@ -420,7 +500,7 @@ function renderMapDrawer(): string {
         station: liveStations.find(
           (station) => station.callsign === selectedCallsign,
         ),
-        latestPacket: trafficFrames[0],
+        latestPacket: trafficFrames.find((frame) => frame.direction === 'rx'),
         stations: liveStations,
         showLatestPacket: mapTools.packet,
         showStations: mapTools.scroller,
@@ -446,6 +526,49 @@ function refreshPacketScroller(): void {
     scroll.scrollTop = scrollTop + scroll.scrollHeight - oldHeight;
 }
 
+function refreshMapDrawer(): void {
+  const drawer = appRoot.querySelector<HTMLElement>('.right-panel');
+  if (!drawer) return;
+  const latest = drawer.querySelector<HTMLElement>('.last-heard-packet');
+  if (latest) latest.outerHTML = renderLastPacket(
+    trafficFrames.find((frame) => frame.direction === 'rx'),
+    liveStations,
+    parseCoordinates(stationSettings.location),
+  );
+  const scroll = drawer.querySelector<HTMLElement>('.station-scroll');
+  if (scroll) {
+    const top = scroll.scrollTop;
+    const previous = scroll.querySelector<HTMLElement>('.station-card');
+    const details = renderScrollerStation(liveStations.find((station) => station.callsign === selectedCallsign));
+    if (previous && details) {
+      if (previous.outerHTML !== details) previous.outerHTML = details;
+    } else if (previous) previous.remove();
+    else if (details) scroll.insertAdjacentHTML('afterbegin', details);
+    scroll.scrollTop = top;
+    refreshPacketScroller();
+  }
+}
+
+function restoreScrollerAfterResume(): void {
+  if (scrollerBeforeSleep !== undefined) {
+    if (scrollerBeforeSleep.revision === scrollerChangeRevision)
+      mapTools.scroller = scrollerBeforeSleep.visible;
+    scrollerBeforeSleep = undefined;
+  }
+  if (activeView !== 'map' || !mapTools.scroller) return;
+  const content = appRoot.querySelector<HTMLElement>('.content-area');
+  if (!content) return;
+  const drawer = content.querySelector<HTMLElement>('.right-panel');
+  if (!drawer) content.insertAdjacentHTML('beforeend', renderMapDrawer());
+  else if (!drawer.querySelector('.station-panel')) drawer.outerHTML = renderMapDrawer();
+  refreshMapDrawer();
+}
+
+window.aprsbox.system.onSuspend(() => {
+  scrollerBeforeSleep = { visible: mapTools.scroller, revision: scrollerChangeRevision };
+});
+window.aprsbox.system.onResume(restoreScrollerAfterResume);
+
 setInterval(() => {
   if (activeView === 'map' && mapTools.scroller) refreshPacketScroller();
 }, 60_000);
@@ -456,30 +579,169 @@ function receiveStations(stations: Station[]): void {
     selectedCallsign = undefined;
   }
   updateStationMarkers?.(stations);
-  const drawer = appRoot.querySelector('.right-panel');
-  if (drawer) {
-    const scrollTop = drawer.querySelector('.station-scroll')?.scrollTop ?? 0;
-    drawer.outerHTML = renderMapDrawer();
-    const scroll = appRoot.querySelector<HTMLElement>('.station-scroll');
-    if (scroll) scroll.scrollTop = scrollTop;
-  }
+  refreshMapDrawer();
   if (activeView === 'stations') {
     const view = appRoot.querySelector('.view-region');
     const station = stations.find((item) => item.callsign === detailCallsign);
-    if (view)
+    if (!station) detailCallsign = undefined;
+    const toolbar = appRoot.querySelector<HTMLElement>('.topbar .stations-filters');
+    if (toolbar) toolbar.innerHTML = station ? '' : renderStationFilters(stations, stationsViewState.filter);
+    const searchContainer = appRoot.querySelector<HTMLElement>('.stations-search-container');
+    if (searchContainer) {
+      const input = searchContainer.querySelector<HTMLInputElement>('[data-stations-search]');
+      if (station) searchContainer.innerHTML = '';
+      else if (!input) searchContainer.innerHTML = renderStationSearch(stations, stationsViewState);
+      else {
+        const count = searchContainer.querySelector<HTMLElement>('[data-stations-count]');
+        if (count) count.textContent = `${filterStations(stations, stationsViewState.filter, stationsViewState.search).length} entries`;
+      }
+    }
+    if (view) {
+      const scroll = view.querySelector<HTMLElement>('.stations-table-wrap');
+      const scrollTop = scroll?.scrollTop ?? 0;
+      const scrollLeft = scroll?.scrollLeft ?? 0;
+      const detailScroll = view.querySelector<HTMLElement>('.station-detail-view')?.scrollTop ?? 0;
+      const detailMap = view.querySelector<HTMLElement>('.station-detail-map');
+      if (station && detailMap) detailMap.remove();
+      else if (!station && detailMap) {
+        disposeCurrentView?.();
+        disposeCurrentView = undefined;
+      }
       view.innerHTML = (
         station
           ? renderStationDetails(
               station,
               parseCoordinates(stationSettings.location),
+              trafficFrames,
+              stations,
             )
-          : renderStationsView(stations)
+          : renderStationsView(stations, parseCoordinates(stationSettings.location), stationsViewState)
       ).html;
+      if (station && detailMap) {
+        view.querySelector('.station-detail-map')?.replaceWith(detailMap);
+        updateDetailMap?.(station);
+        const detail = view.querySelector<HTMLElement>('.station-detail-view');
+        if (detail) detail.scrollTop = detailScroll;
+      }
+      const updatedScroll = view.querySelector<HTMLElement>('.stations-table-wrap');
+      if (updatedScroll) {
+        updatedScroll.scrollTop = scrollTop;
+        updatedScroll.scrollLeft = scrollLeft;
+      }
+    }
   }
 }
 
 appRoot.addEventListener('click', (event) => {
   if (!(event.target instanceof Element)) return;
+  const saveLog = event.target.closest<HTMLButtonElement>('[data-action="save-traffic-log"]');
+  if (saveLog) {
+    if (savingTrafficLog) return;
+    savingTrafficLog = true;
+    saveLog.disabled = true;
+    void window.aprsbox.traffic.saveLog(trafficFilter).catch((error) => {
+      alertMessage = { title: 'Traffic log not saved', message: error instanceof Error ? error.message : String(error), tone: 'error' };
+      renderApp();
+    }).finally(() => { savingTrafficLog = false; saveLog.disabled = false; });
+    return;
+  }
+  const clearMapCache = event.target.closest<HTMLButtonElement>('[data-map-clear-cache]');
+  if (clearMapCache?.dataset.mapClearCache) {
+    const id = clearMapCache.dataset.mapClearCache;
+    clearMapCache.disabled = true;
+    void window.aprsbox.config.clearMapCache(id).then(() => updateMapCacheStats(id)).catch((error) => {
+      alertMessage = { title: 'Cache not cleared', message: error instanceof Error ? error.message : String(error), tone: 'error' };
+      renderApp();
+    }).finally(() => { clearMapCache.disabled = false; });
+    return;
+  }
+  if (event.target.closest('[data-action="clear-stations-search"]')) {
+    stationsViewState.search = '';
+    const input = appRoot.querySelector<HTMLInputElement>('[data-stations-search]');
+    if (input) { input.value = ''; input.focus(); }
+    const clear = appRoot.querySelector<HTMLButtonElement>('[data-action="clear-stations-search"]');
+    if (clear) clear.disabled = true;
+    receiveStations(liveStations);
+    return;
+  }
+  if (event.target.closest('[data-action="clear-traffic-filter"]')) {
+    trafficFilter = '';
+    const input = appRoot.querySelector<HTMLInputElement>('[data-traffic-filter]');
+    if (input) { input.value = ''; input.focus(); }
+    refreshTrafficMonitor();
+    return;
+  }
+  const editMap = event.target.closest<HTMLButtonElement>('[data-map-edit]');
+  if (editMap) {
+    mapSourceDraft = mapSettings.sources.find((item) => item.id === editMap.dataset.mapEdit);
+    if (mapSourceDraft) mapSourceDraft = { ...mapSourceDraft };
+    renderApp();
+    return;
+  }
+  if (event.target.closest('[data-action="cancel-map-edit"]')) {
+    mapSourceDraft = undefined;
+    renderApp();
+    return;
+  }
+  const defaultMap = event.target.closest<HTMLButtonElement>('[data-map-default]');
+  if (defaultMap?.dataset.mapDefault) {
+    void saveMapSettings({ ...mapSettings, defaultSourceId: defaultMap.dataset.mapDefault });
+    return;
+  }
+  const deleteMap = event.target.closest<HTMLButtonElement>('[data-map-delete]');
+  if (deleteMap?.dataset.mapDelete && deleteMap.dataset.mapDelete !== mapSettings.defaultSourceId) {
+    const id = deleteMap.dataset.mapDelete;
+    if (mapSourceDraft?.id === id) mapSourceDraft = undefined;
+    void saveMapSettings({ ...mapSettings, sources: mapSettings.sources.filter((item) => item.id !== id) });
+    return;
+  }
+  if (event.target.closest('[data-action="save-coverage"]')) {
+    const select = appRoot.querySelector<HTMLSelectElement>('[data-coverage-opacity]');
+    if (select) void saveMapSettings({ ...mapSettings, coverageFillOpacity: Number(select.value) });
+    return;
+  }
+  const backup = event.target.closest<HTMLButtonElement>('[data-action="export-config"], [data-action="import-config"]');
+  if (backup) {
+    backup.disabled = true;
+    const importing = backup.dataset.action === 'import-config';
+    void (importing ? window.aprsbox.config.importBackup() : window.aprsbox.config.exportBackup()).then((done) => {
+      if (!done) { backup.disabled = false; return; }
+      if (importing) { window.location.reload(); return; }
+      alertMessage = { title: 'Backup exported', message: 'Configuration backup saved.', tone: 'success' };
+      renderApp();
+    }).catch((error) => {
+      alertMessage = { title: 'Backup failed', message: error instanceof Error ? error.message : String(error), tone: 'error' };
+      renderApp();
+    });
+    return;
+  }
+  if (event.target.closest('[data-action="traffic-legend"]')) {
+    trafficLegendOpen = true;
+    renderApp();
+    return;
+  }
+  if (event.target.matches('.traffic-legend-backdrop') || event.target.closest('button[data-action="close-traffic-legend"]')) {
+    trafficLegendOpen = false;
+    renderApp();
+    return;
+  }
+  const filter = event.target.closest<HTMLButtonElement>('[data-stations-filter]');
+  if (filter?.dataset.stationsFilter) {
+    stationsViewState.filter = filter.dataset.stationsFilter as StationFilter;
+    renderApp();
+    return;
+  }
+  const sort = event.target.closest<HTMLButtonElement>('[data-stations-sort]');
+  if (sort?.dataset.stationsSort) {
+    const key = sort.dataset.stationsSort as StationSort;
+    if (stationsViewState.sort === key) stationsViewState.direction = stationsViewState.direction === 'asc' ? 'desc' : 'asc';
+    else {
+      stationsViewState.sort = key;
+      stationsViewState.direction = key === 'lastHeard' ? 'desc' : 'asc';
+    }
+    renderApp();
+    return;
+  }
   const symbol = event.target.closest<HTMLButtonElement>('[data-symbol-code]');
   if (symbol?.dataset.symbolCode) {
     stationSettings.symbolCode = symbol.dataset.symbolCode;
@@ -511,22 +773,72 @@ appRoot.addEventListener('click', (event) => {
     renderApp();
     return;
   }
-  const stationButton =
-    event.target.closest<HTMLButtonElement>('[data-station]');
-  if (stationButton) {
-    selectedCallsign = stationButton.dataset.station;
-    const drawer = appRoot.querySelector('.right-panel');
-    if (drawer) drawer.outerHTML = renderMapDrawer();
-  }
-  if (event.target.closest('.right-panel [data-tool="scroller"]')) {
-    mapTools.scroller = false;
+  if (event.target.closest('[data-action="station-message"]') && detailCallsign) {
+    messageRecipient = detailCallsign;
+    activeView = 'messages';
     renderApp();
+    return;
+  }
+  const stationButton =
+    event.target.closest<HTMLElement>('[data-station]');
+  if (stationButton) {
+    if (activeView === 'stations') {
+      detailCallsign = stationButton.dataset.station;
+      renderApp();
+      return;
+    }
+    selectedCallsign = stationButton.dataset.station;
+    refreshMapDrawer();
+  }
+  if (event.target.closest('.right-panel [data-action="close-scroller"]')) {
+    mapTools.scroller = false;
+    scrollerVisibilityChanged = true;
+    scrollerChangeRevision++;
+    void window.aprsbox.config.saveScrollerVisibility(false).catch(console.error);
+    renderApp();
+  }
+});
+
+appRoot.addEventListener('input', (event) => {
+  if (event.target instanceof HTMLInputElement && event.target.matches('[data-stations-search]')) {
+    stationsViewState.search = event.target.value;
+    const clear = appRoot.querySelector<HTMLButtonElement>('[data-action="clear-stations-search"]');
+    if (clear) clear.disabled = !stationsViewState.search.trim();
+    receiveStations(liveStations);
+    return;
+  }
+  if (event.target instanceof HTMLInputElement && event.target.matches('[data-traffic-filter]')) {
+    trafficFilter = event.target.value;
+    refreshTrafficMonitor();
+  }
+});
+
+appRoot.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && trafficLegendOpen) {
+    trafficLegendOpen = false;
+    renderApp();
+    return;
+  }
+  if ((event.key === 'Enter' || event.key === ' ') && event.target instanceof HTMLElement && event.target.matches('.stations-table tr[data-station]')) {
+    event.preventDefault();
+    event.target.click();
   }
 });
 
 appRoot.addEventListener('submit', (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
+  if (form.matches('[data-map-source-form]')) {
+    event.preventDefault();
+    const values = new FormData(form);
+    const id = String(values.get('id') || crypto.randomUUID());
+    const source: MapSource = { id, name: String(values.get('name') ?? ''), url: String(values.get('url') ?? ''), attribution: String(values.get('attribution') ?? ''), minZoom: Number(values.get('minZoom')), maxZoom: Number(values.get('maxZoom')), enabled: values.has('enabled'), cacheEnabled: values.has('cacheEnabled') };
+    mapSourceDraft = source;
+    const found = mapSettings.sources.some((item) => item.id === id);
+    const sources = found ? mapSettings.sources.map((item) => item.id === id ? source : item) : [...mapSettings.sources, source];
+    void saveMapSettings({ ...mapSettings, sources }, true);
+    return;
+  }
   if (form.matches('[data-message-new]')) {
     event.preventDefault();
     const value = String(new FormData(form).get('recipient') ?? '')
@@ -617,13 +929,13 @@ function renderApp(): void {
   mountedLocationPicker = undefined;
   const resolvedTheme =
     document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
-  appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView)}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, activeSettingsSection, `${stationSettings.callsign}${stationSettings.ssid}`, mapMaskOpacity[resolvedTheme])}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}`;
+  appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView)}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, activeSettingsSection, `${stationSettings.callsign}${stationSettings.ssid}`, mapMaskOpacity[resolvedTheme], detailCallsign ? '' : renderStationFilters(liveStations, stationsViewState.filter), interfaces, interfaceStatuses, activeView === 'traffic' ? renderTrafficFilter(trafficFrames, trafficFilter) : '', activeView === 'stations' && !detailCallsign ? renderStationSearch(liveStations, stationsViewState) : '')}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}`;
   if (existingMap) {
     appRoot.querySelector('.view-region')?.replaceWith(existingMap);
     window.dispatchEvent(new Event('aprs-map:visible'));
   }
   if (locationPickerOpen && locationPickerCenter) {
-    mountedLocationPicker = mountLocationPicker(appRoot, locationPickerCenter);
+    mountedLocationPicker = mountLocationPicker(appRoot, locationPickerCenter, activeMapSource(mapSettings));
   }
   const configPath = appRoot.querySelector<HTMLElement>('[data-config-path]');
   if (configPath) {
@@ -635,6 +947,9 @@ function renderApp(): void {
       .catch(() => {
         configPath.textContent = 'Configuration path unavailable.';
       });
+  }
+  if (activeView === 'settings' && activeSettingsSection === 'general') {
+    for (const source of mapSettings.sources) void updateMapCacheStats(source.id);
   }
   appRoot.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) =>
     button.addEventListener('click', () => {
@@ -665,12 +980,17 @@ function renderApp(): void {
     });
   appRoot
     .querySelectorAll<HTMLButtonElement>(
-      '[data-tool]:not(.right-panel [data-tool])',
+      '.topbar [data-tool]',
     )
     .forEach((button) =>
       button.addEventListener('click', () => {
         const tool = button.dataset.tool as MapToolId;
         mapTools[tool] = !mapTools[tool];
+        if (tool === 'scroller') {
+          scrollerVisibilityChanged = true;
+          scrollerChangeRevision++;
+          void window.aprsbox.config.saveScrollerVisibility(mapTools.scroller).catch(console.error);
+        }
         window.dispatchEvent(new Event('aprs-map:overlays'));
         renderApp();
       }),

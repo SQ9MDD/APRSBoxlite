@@ -1,5 +1,5 @@
 import { decodeAprsPosition } from './aprsPosition';
-import { lookupTocall } from './tocalls';
+import { identifyAprsDevice } from './tocalls';
 import { decodeAprsExtensions } from './aprsExtensions';
 import type { Station } from '../types';
 
@@ -26,6 +26,7 @@ export class StationStore {
     const destination = headerMatch[2].toUpperCase();
     const path = headerMatch[3] ?? '';
     const previous = this.stations.get(callsign);
+    const device = identifyAprsDevice(destination, packet.slice(packet.indexOf(':') + 1)) ?? previous?.aprsDevice;
     if (!position) {
       if (
         !previous ||
@@ -36,6 +37,8 @@ export class StationStore {
         return;
       this.stations.set(callsign, {
         ...previous,
+        aprsDevice: device,
+        aprsClient: device?.identifiedAs ?? previous.aprsClient,
         destination,
         path,
         sourceInterface,
@@ -67,7 +70,8 @@ export class StationStore {
     this.stations.set(callsign, {
       ...position,
       callsign,
-      aprsClient: lookupTocall(destination) ?? previous?.aprsClient,
+      aprsDevice: device,
+      aprsClient: device?.identifiedAs ?? previous?.aprsClient,
       destination,
       path,
       sourceInterface,

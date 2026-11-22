@@ -5,6 +5,9 @@ import { createMapOverlays } from './MapOverlays';
 import { createMapRuler, type RulerState } from './MapRuler';
 import { stationFields } from './stationFields';
 import type { Coordinates } from '../components/LocationPicker';
+import type { MapSettings } from '../mapSettings';
+import { activeMapSource, mapTileUrl } from '../mapSettings';
+import { escapeHtml } from '../components/escapeHtml';
 
 const symbols = import.meta.glob('../components/icons/aprs-symbols/*.png', {
   eager: true,
@@ -26,6 +29,7 @@ interface MapViewOptions {
   rulerState: RulerState;
   onStationAction: (action: 'message' | 'details', callsign: string) => void;
   ownPosition: () => Coordinates | undefined;
+  mapSettings: MapSettings;
 }
 
 export interface MapViewport {
@@ -115,6 +119,7 @@ export function renderMapView({
   rulerState,
   onStationAction,
   ownPosition,
+  mapSettings,
 }: MapViewOptions): {
   html: string;
   mount: (element: HTMLElement) => () => void;
@@ -127,6 +132,8 @@ export function renderMapView({
       const map = L.map(mapElement, {
         zoomControl: false,
         attributionControl: true,
+        minZoom: 0,
+        maxZoom: 19,
       }).setView(
         viewport ? [viewport.latitude, viewport.longitude] : resetCenter(),
         viewport?.zoom ?? 12,
@@ -158,11 +165,14 @@ export function renderMapView({
       map.on('resize zoom move', syncMask);
       syncMask();
       L.control.zoom({ position: 'bottomleft' }).addTo(map);
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      const source = activeMapSource(mapSettings);
+      L.tileLayer(mapTileUrl(source), {
         maxZoom: 19,
-        attribution: '&copy; OpenStreetMap contributors',
+        minZoom: source.minZoom,
+        maxNativeZoom: source.maxZoom,
+        attribution: escapeHtml(source.attribution),
       }).addTo(map);
-      const overlays = createMapOverlays(map);
+      const overlays = createMapOverlays(map, mapSettings.coverageFillOpacity / 100);
       const ruler = createMapRuler(map, rulerState);
       const updateVisibility = () => {
         const visibility = overlayVisibility();
@@ -197,6 +207,7 @@ export function renderMapView({
               station.lastHeard !== previous.lastHeard ||
               station.comment !== previous.comment ||
               station.aprsClient !== previous.aprsClient ||
+              station.aprsDevice !== previous.aprsDevice ||
               station.sourceInterface !== previous.sourceInterface ||
               station.path !== previous.path ||
               station.latitude !== previous.latitude ||

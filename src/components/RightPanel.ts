@@ -25,16 +25,20 @@ export function createRightPanel({
   ownCallsign,
   ownPosition,
 }: RightPanelProps): string {
-  const details = station
-    ? `<section class="station-card"><div class="panel-heading"><span>${station.callsign}</span><span class="station-symbol kind-${station.kind}">${escapeHtml(station.symbol)}</span></div><dl class="station-details"><div><dt>Heard</dt><dd>${station.lastHeard}</dd></div><div><dt>Position</dt><dd>${station.latitude.toFixed(4)}, ${station.longitude.toFixed(4)}</dd></div>${station.course ? `<div><dt>Course</dt><dd>${station.course} · ${station.speed}</dd></div>` : ''}</dl><p class="station-comment">${escapeHtml(station.comment)}</p></section>`
-    : '';
+  const details = renderScrollerStation(station);
   const latest = showLatestPacket
     ? renderLastPacket(latestPacket, stations, ownPosition)
     : '';
   const scroller = showStations
-    ? `<section class="station-panel"><div class="drawer-header"><span>Traffic Monitor</span><button data-tool="scroller" type="button" aria-label="Hide traffic scroller">×</button></div><div class="station-scroll">${details}<div class="packet-scroller">${renderPacketRows(frames, stations, ownCallsign)}</div></div></section>`
+    ? `<section class="station-panel"><div class="drawer-header"><span>Traffic Monitor</span><button data-action="close-scroller" type="button" aria-label="Hide traffic scroller">×</button></div><div class="station-scroll">${details}<div class="packet-scroller">${renderPacketRows(frames, stations, ownCallsign)}</div></div></section>`
     : '';
   return `<aside class="right-panel">${latest}${scroller}</aside>`;
+}
+
+export function renderScrollerStation(station: Station | undefined): string {
+  return station
+    ? `<section class="station-card"><div class="panel-heading"><span>${station.callsign}</span><span class="station-symbol kind-${station.kind}">${escapeHtml(station.symbol)}</span></div><dl class="station-details"><div><dt>Heard</dt><dd>${station.lastHeard}</dd></div><div><dt>Position</dt><dd>${station.latitude.toFixed(4)}, ${station.longitude.toFixed(4)}</dd></div>${station.course ? `<div><dt>Course</dt><dd>${station.course} · ${station.speed}</dd></div>` : ''}</dl><p class="station-comment">${escapeHtml(station.comment)}</p></section>`
+    : '';
 }
 
 export function renderLastPacket(

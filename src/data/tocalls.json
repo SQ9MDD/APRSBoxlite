@@ -2,6 +2,251 @@
   "meta": {
     "generation_time": "2026-04-03T16:21:06Z"
   },
+  "mice": {
+    "_6": {
+      "class": "rig",
+      "model": "FTX-1",
+      "vendor": "Yaesu"
+    },
+    "_4": {
+      "vendor": "Yaesu",
+      "model": "FTM-500D",
+      "class": "rig"
+    },
+    "_0": {
+      "class": "ht",
+      "model": "FT3D",
+      "vendor": "Yaesu"
+    },
+    "_(": {
+      "class": "ht",
+      "model": "FT2D",
+      "vendor": "Yaesu"
+    },
+    "_5": {
+      "vendor": "Yaesu",
+      "model": "FTM-510D",
+      "class": "rig"
+    },
+    "_)": {
+      "vendor": "Yaesu",
+      "model": "FTM-100D",
+      "class": "rig"
+    },
+    "^v": {
+      "model": "anyfrog",
+      "vendor": "HinzTec"
+    },
+    "_%": {
+      "model": "FTM-400DR",
+      "class": "rig",
+      "vendor": "Yaesu"
+    },
+    " X": {
+      "vendor": "SainSonic",
+      "model": "AP510",
+      "class": "tracker"
+    },
+    "*9": {
+      "vendor": "NOR",
+      "model": "AVRT9",
+      "class": "ht"
+    },
+    "_#": {
+      "class": "ht",
+      "model": "VX-8G",
+      "vendor": "Yaesu"
+    },
+    "_1": {
+      "vendor": "Yaesu",
+      "class": "rig",
+      "model": "FTM-300D"
+    },
+    "|3": {
+      "vendor": "Byonics",
+      "model": "TinyTrak3",
+      "class": "tracker"
+    },
+    ":2": {
+      "vendor": "SQ8L",
+      "model": "VP-Tracker",
+      "class": "tracker"
+    },
+    "|4": {
+      "vendor": "Byonics",
+      "model": "TinyTrak4",
+      "class": "tracker"
+    },
+    "(8": {
+      "class": "ht",
+      "model": "D878UV",
+      "vendor": "Anytone"
+    },
+    "_2": {
+      "model": "FTM-200D",
+      "class": "rig",
+      "vendor": "Yaesu"
+    },
+    "_7": {
+      "class": "rig",
+      "model": "FTM-310D",
+      "vendor": "Yaesu"
+    },
+    "_$": {
+      "vendor": "Yaesu",
+      "model": "FT1D",
+      "class": "ht"
+    },
+    "_ ": {
+      "class": "ht",
+      "model": "VX-8",
+      "vendor": "Yaesu"
+    },
+    "_3": {
+      "vendor": "Yaesu",
+      "model": "FT5D",
+      "class": "ht"
+    },
+    "_\"": {
+      "model": "FTM-350",
+      "class": "rig",
+      "vendor": "Yaesu"
+    },
+    "(5": {
+      "vendor": "Anytone",
+      "model": "D578UV",
+      "class": "ht"
+    },
+    "*v": {
+      "model": "Tracker",
+      "class": "tracker",
+      "vendor": "KissOZ"
+    },
+    "[1": {
+      "model": "APRSdroid",
+      "class": "app",
+      "os": "Android",
+      "vendor": "Open Source"
+    }
+  },
+  "micelegacy": {
+    ">&": {
+      "vendor": "Kenwood",
+      "suffix": "&",
+      "features": [
+        "messaging"
+      ],
+      "prefix": ">",
+      "class": "ht",
+      "model": "TH-D75"
+    },
+    "]": {
+      "model": "TM-D700",
+      "prefix": "]",
+      "class": "rig",
+      "features": [
+        "messaging"
+      ],
+      "vendor": "Kenwood"
+    },
+    ">": {
+      "class": "ht",
+      "prefix": ">",
+      "model": "TH-D7A",
+      "vendor": "Kenwood",
+      "features": [
+        "messaging"
+      ]
+    },
+    ">^": {
+      "class": "ht",
+      "prefix": ">",
+      "model": "TH-D74",
+      "suffix": "^",
+      "vendor": "Kenwood",
+      "features": [
+        "messaging"
+      ]
+    },
+    ">=": {
+      "model": "TH-D72",
+      "class": "ht",
+      "prefix": ">",
+      "features": [
+        "messaging"
+      ],
+      "vendor": "Kenwood",
+      "suffix": "="
+    },
+    "]=": {
+      "model": "TM-D710",
+      "prefix": "]",
+      "class": "rig",
+      "features": [
+        "messaging"
+      ],
+      "suffix": "=",
+      "vendor": "Kenwood"
+    }
+  },
+  "classes": {
+    "digi": {
+      "description": "Digipeater software",
+      "shown": "Digipeater"
+    },
+    "software": {
+      "description": "Desktop software",
+      "shown": "Desktop software"
+    },
+    "wx": {
+      "shown": "Weather station",
+      "description": "Dedicated weather station"
+    },
+    "igate": {
+      "shown": "iGate",
+      "description": "iGate software"
+    },
+    "daemon": {
+      "shown": "Background software",
+      "description": "Computer software without user interface"
+    },
+    "tracker": {
+      "description": "Tracker device",
+      "shown": "Tracker"
+    },
+    "rig": {
+      "description": "Mobile or desktop radio",
+      "shown": "Rig"
+    },
+    "dstar": {
+      "description": "D-Star radio",
+      "shown": "D-Star"
+    },
+    "ht": {
+      "shown": "HT",
+      "description": "Hand-held radio"
+    },
+    "app": {
+      "description": "Mobile phone or tablet app",
+      "shown": "Mobile app"
+    },
+    "service": {
+      "shown": "Service",
+      "description": "Software running as a web service or a message bot"
+    },
+    "gadget": {
+      "shown": "Gadget",
+      "description": "Small non-tracker APRS device"
+    },
+    "satellite": {
+      "description": "Satellite-based station",
+      "shown": "Satellite"
+    },
+    "network": {
+      "description": "A hardware appliance with self-contained APRS networking features",
+      "shown": "APRS network hardware appliance"
+    }
+  },
   "tocalls": {
     "APIZCI": {
       "model": "hymTR IZCI Tracker",

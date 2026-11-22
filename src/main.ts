@@ -1,10 +1,18 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, net, powerMonitor, protocol, session } from 'electron';
 import path from 'node:path';
+import * as fs from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
 import { StationStore } from './main/stationStore';
 import { MessageService } from './main/aprsMessages';
+import { MessageStorage } from './main/messageStorage';
 import { encodeBeacon } from './main/aprsBeacon';
+import { classifyTraffic } from './main/trafficColors';
 import type { Station, AprsMessage } from './types';
-import { ConfigStorage, getApplicationDirectory } from './main/configStorage';
+import { ConfigStorage, getApplicationDirectory, atomicWriteJson } from './main/configStorage';
+import { DEFAULT_MAP_SETTINGS, validateMapSettings } from './mapSettings';
+import { MapTileCache } from './main/mapTileCache';
+import { createConfigurationBackup, readConfigurationBackup } from './main/configBackup';
+import { filterTrafficFrames, formatTrafficLog, trafficLogFilename } from './trafficLog';
 import {
   KissTcpRxService,
   KissFrameDecoder,
@@ -39,9 +47,24 @@ interface InterfaceConfiguration {
   reconnectTimeout: string;
 }
 
+const existingUserDataDirectory = app.getPath('userData');
+app.setName('APRSBOX');
+mkdirSync(existingUserDataDirectory, { recursive: true });
+app.setPath('userData', existingUserDataDirectory);
+
+protocol.registerSchemesAsPrivileged([{ scheme: 'aprsbox-tile', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
+
+function applicationIconPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'aprsbox.png')
+    : path.join(app.getAppPath(), 'assets', 'aprsbox.png');
+}
+
 const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
+    title: 'APRSBOX',
+    icon: applicationIconPath(),
     width: 1440,
     height: 900,
     minWidth: 1100,
@@ -66,6 +89,7 @@ const createWindow = () => {
 let configStorage: ConfigStorage;
 let kissTcpRxService: KissTcpRxService;
 let messageService: MessageService;
+let messageStorage: MessageStorage | undefined;
 let beaconTimer: ReturnType<typeof setTimeout> | undefined;
 const stationStore = new StationStore((stations) =>
   broadcast('stations:changed', stations),
@@ -206,6 +230,7 @@ function validateInterfaces(value: unknown): InterfaceConfiguration[] {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
+  if (process.platform === 'darwin') app.dock?.setIcon(applicationIconPath());
   session.defaultSession.setPermissionCheckHandler(
     (_webContents, permission) => permission === 'geolocation',
   );
@@ -227,15 +252,64 @@ app.whenReady().then(async () => {
     userDataDirectory: app.getPath('userData'),
   });
   await configStorage.initialize();
+  const tileCache = new MapTileCache(
+    () => path.dirname(configStorage.getLocation().path),
+    () => {
+      try { return validateMapSettings(configStorage.getConfiguration().mapSettings ?? DEFAULT_MAP_SETTINGS).sources; }
+      catch { return DEFAULT_MAP_SETTINGS.sources; }
+    },
+    (url) => net.fetch(url, { signal: AbortSignal.timeout(15_000), headers: { 'User-Agent': `APRSBoxLite/${app.getVersion()}` } }),
+  );
+  protocol.handle('aprsbox-tile', (request) => tileCache.respond(request.url).catch((error) => {
+    console.error('Map tile cache failed:', error);
+    return new Response(null, { status: 500 });
+  }));
+  let storedMessages: AprsMessage[] = [];
+  const historyStorage = new MessageStorage(app.getPath('userData'));
+  try {
+    storedMessages = await historyStorage.load();
+    messageStorage = historyStorage;
+  } catch (error) {
+    console.error('Failed to load message history:', error);
+    dialog.showErrorBox('Message history unavailable', 'The saved message history could not be read. It has been left unchanged, and new messages will not be saved in this session.');
+  }
+  let messageStorageErrorReported = false;
+  const persistMessages = (messages: AprsMessage[]) => {
+    if (!messageStorage) return;
+    void messageStorage.save(messages).then(() => {
+      messageStorageErrorReported = false;
+    }).catch((error) => {
+      console.error('Failed to save message history:', error);
+      if (!messageStorageErrorReported) {
+        messageStorageErrorReported = true;
+        dialog.showErrorBox('Message history not saved', 'The message history could not be saved. Check that the application data folder is writable.');
+      }
+    });
+  };
   kissTcpRxService = new KissTcpRxService(
     (frame) => {
+      const station = configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown } | undefined;
+      if (typeof station?.callsign === 'string' && typeof station.ssid === 'string')
+        frame.category = classifyTraffic(frame.packet, `${station.callsign}${station.ssid}`);
       broadcast('traffic:received', frame);
-      stationStore.receive(frame.packet, frame.interfaceName);
-      messageService.receive(frame.packet, frame.interfaceId);
+      if (frame.direction === 'rx') {
+        stationStore.receive(frame.packet, frame.interfaceName);
+        messageService.receive(frame.packet, frame.interfaceId);
+      }
     },
     (interfaceId, status) =>
       broadcast('traffic:interface-status', { interfaceId, status }),
   );
+  const notifyPower = (event: 'system:suspend' | 'system:resume') => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(event);
+    }
+  };
+  powerMonitor.on('suspend', () => notifyPower('system:suspend'));
+  powerMonitor.on('resume', () => {
+    kissTcpRxService.reconnectAfterResume();
+    notifyPower('system:resume');
+  });
   messageService = new MessageService(
     () => {
       const station = configStorage.getConfiguration().station as
@@ -249,8 +323,14 @@ app.whenReady().then(async () => {
       return `${station.callsign}${station.ssid}`;
     },
     (interfaceId, frame) => kissTcpRxService.transmit(interfaceId, frame),
-    (messages) => broadcast('messages:changed', messages),
+    (messages) => {
+      broadcast('messages:changed', messages);
+      persistMessages(messages);
+    },
+    storedMessages,
   );
+  if (storedMessages.some((message) => message.status === 'pending'))
+    persistMessages(messageService.snapshot());
   const storedInterfaces = configStorage.getConfiguration().interfaces;
   if (Array.isArray(storedInterfaces)) {
     try {
@@ -335,6 +415,21 @@ app.whenReady().then(async () => {
       throw new Error('Invalid map mask settings.');
     return updateConfig({ mapMaskOpacity: { light, dark } });
   });
+  ipcMain.handle('config:save-scroller-visibility', (_event, visible: unknown) => {
+    if (typeof visible !== 'boolean') throw new Error('Invalid scroller visibility.');
+    return updateConfig({ scrollerVisible: visible });
+  });
+  ipcMain.handle('config:save-map-settings', (_event, value: unknown) =>
+    updateConfig({ mapSettings: validateMapSettings(value) }),
+  );
+  ipcMain.handle('map:cache-stats', (_event, id: unknown) => {
+    if (typeof id !== 'string' || id.length > 80) throw new Error('Invalid map source.');
+    return tileCache.stats(id);
+  });
+  ipcMain.handle('map:clear-cache', (_event, id: unknown) => {
+    if (typeof id !== 'string' || id.length > 80) throw new Error('Invalid map source.');
+    return tileCache.clear(id);
+  });
   ipcMain.handle('config:save-map-viewport', (_event, value: unknown) => {
     if (!value || typeof value !== 'object')
       throw new Error('Invalid map viewport.');
@@ -363,7 +458,48 @@ app.whenReady().then(async () => {
       },
     );
   });
+  ipcMain.handle('config:export-backup', async () => {
+    const result = await dialog.showSaveDialog({ title: 'Export configuration backup', defaultPath: 'APRSBoxLite-config-backup.json', filters: [{ name: 'JSON', extensions: ['json'] }] });
+    if (result.canceled || !result.filePath) return false;
+    if ([configStorage.getLocation().path, path.join(app.getPath('userData'), 'messages.json')].some((file) => path.resolve(file) === path.resolve(result.filePath!))) throw new Error('Choose a separate backup file.');
+    await configWrites;
+    await atomicWriteJson(result.filePath, createConfigurationBackup(configStorage.getConfiguration()));
+    return true;
+  });
+  ipcMain.handle('config:import-backup', async () => {
+    const result = await dialog.showOpenDialog({ title: 'Import configuration backup', properties: ['openFile'], filters: [{ name: 'JSON', extensions: ['json'] }] });
+    if (result.canceled || !result.filePaths[0]) return false;
+    const file = result.filePaths[0];
+    if ((await fs.stat(file)).size > 1024 * 1024) throw new Error('Backup file is too large.');
+    const configuration = readConfigurationBackup(JSON.parse(await fs.readFile(file, 'utf8')));
+    const restored = { ...configuration };
+    if (configuration.station !== undefined) restored.station = validateStationConfiguration(configuration.station);
+    const interfaces = configuration.interfaces === undefined ? [] : validateInterfaces(configuration.interfaces);
+    if (configuration.interfaces !== undefined) restored.interfaces = interfaces;
+    if (configuration.mapSettings !== undefined) restored.mapSettings = validateMapSettings(configuration.mapSettings);
+    const confirmation = await dialog.showMessageBox({ type: 'warning', buttons: ['Cancel', 'Import'], defaultId: 0, cancelId: 0, title: 'Import configuration backup', message: 'Replace the current configuration with this backup?', detail: 'Saved station, interfaces and map settings will be replaced. Message history is not affected.' });
+    if (confirmation.response !== 1) return false;
+    const write = configWrites.then(() => configStorage.save(restored));
+    configWrites = write.then(() => undefined, () => undefined);
+    await write;
+    kissTcpRxService.configure(interfaces);
+    scheduleBeacon();
+    return true;
+  });
   ipcMain.handle('traffic:get-recent', () => kissTcpRxService.getHistory());
+  ipcMain.handle('traffic:save-log', async (_event, filter: unknown) => {
+    if (typeof filter !== 'string' || filter.length > 1024) throw new Error('Invalid traffic filter.');
+    const snapshot = filterTrafficFrames(kissTcpRxService.getHistory(), filter);
+    const station = configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown } | undefined;
+    const callsign = typeof station?.callsign === 'string' ? station.callsign : '';
+    const ssid = callsign.trim() && typeof station?.ssid === 'string' ? station.ssid : '';
+    const result = await dialog.showSaveDialog({ title: 'Save traffic log', defaultPath: trafficLogFilename(`${callsign}${ssid}`, new Date()), filters: [{ name: 'Text files', extensions: ['txt'] }] });
+    if (result.canceled || !result.filePath) return false;
+    const canonical = (file: string) => process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file);
+    if ([configStorage.getLocation().path, path.join(app.getPath('userData'), 'messages.json')].some((file) => canonical(file) === canonical(result.filePath!))) throw new Error('Choose a separate log file.');
+    await fs.writeFile(result.filePath, formatTrafficLog(snapshot), 'utf8');
+    return true;
+  });
   ipcMain.handle('stations:get', () => stationStore.snapshot());
   ipcMain.handle('messages:get', () => messageService.snapshot());
   ipcMain.handle('station:send-beacon', async (_event, value: unknown) => {
@@ -414,11 +550,23 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
+let quitReady = false;
+let quitting = false;
+app.on('before-quit', (event) => {
+  if (quitReady) return;
+  event.preventDefault();
+  if (quitting) return;
+  quitting = true;
   clearTimeout(beaconTimer);
   kissTcpRxService?.stop();
   stationStore.dispose();
   messageService?.dispose();
+  void (messageStorage?.flush() ?? Promise.resolve()).catch((error) => {
+    console.error('Failed to finish saving message history:', error);
+  }).finally(() => {
+    quitReady = true;
+    app.quit();
+  });
 });
 
 // In this file you can include the rest of your app's specific main process

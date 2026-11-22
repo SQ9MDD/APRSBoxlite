@@ -9,6 +9,8 @@ import pauseIcon from '../components/icons/pause-circle.svg';
 import playIcon from '../components/icons/play-circle-outline.svg';
 import plusIcon from '../components/icons/plus-circle-outline.svg';
 import symbolDescriptions from '../data/aprs-symbol-descriptions.json';
+import type { MapSettings, MapSource } from '../mapSettings';
+import { renderGeneralSettings } from './GeneralSettingsView';
 
 const symbolIcons = import.meta.glob('../components/icons/aprs-symbols/*.png', {
   eager: true,
@@ -68,9 +70,11 @@ export function renderSettingsView(
   locationAccuracy: string | undefined,
   phgCalculatorOpen: boolean,
   phgValues: PhgValues,
+  mapSettings: MapSettings,
+  mapSourceDraft: MapSource | undefined,
 ): { html: string } {
   return {
-    html: `<div class="settings-view">${renderSection(activeSection, interfaces, interfaceDraft, selectedInterfaceId, interfaceStatuses, stationSettings, locationAccuracy, phgCalculatorOpen, phgValues)}</div>`,
+    html: `<div class="settings-view">${renderSection(activeSection, interfaces, interfaceDraft, selectedInterfaceId, interfaceStatuses, stationSettings, locationAccuracy, phgCalculatorOpen, phgValues, mapSettings, mapSourceDraft)}</div>`,
   };
 }
 
@@ -84,6 +88,8 @@ function renderSection(
   locationAccuracy: string | undefined,
   phgCalculatorOpen: boolean,
   phgValues: PhgValues,
+  mapSettings: MapSettings,
+  mapSourceDraft: MapSource | undefined,
 ): string {
   if (activeSection === 'station')
     return renderStationForm(
@@ -101,7 +107,7 @@ function renderSection(
       selectedInterfaceId,
       interfaceStatuses,
     );
-  return `<div class="settings-list"><article><div><h3>Position history</h3><p>Keep activity in memory for the last 60 minutes.</p></div><span class="enabled-badge">60 min</span></article><article><div><h3>Map tile source</h3><p>OpenStreetMap standard tiles.</p></div><span class="enabled-badge">OSM</span></article><article class="config-path"><div><h3>Configuration file</h3><p data-config-path>Loading configuration path…</p></div></article></div>`;
+  return renderGeneralSettings(mapSettings, mapSourceDraft);
 }
 
 function renderStationForm(

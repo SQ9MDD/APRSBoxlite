@@ -8,6 +8,10 @@ declare module '*.svg' {
 
 interface Window {
   aprsbox: {
+    system: {
+      onSuspend(callback: () => void): () => void;
+      onResume(callback: () => void): () => void;
+    };
     messages: {
       get(): Promise<import('./types').AprsMessage[]>;
       send(message: {
@@ -28,6 +32,12 @@ interface Window {
       ): () => void;
     };
     config: {
+      getMapCacheStats(id: string): Promise<{ count: number; bytes: number }>;
+      clearMapCache(id: string): Promise<void>;
+      saveMapSettings(settings: import('./mapSettings').MapSettings): Promise<{ path: string; storage: 'portable' | 'userData' }>;
+      exportBackup(): Promise<boolean>;
+      importBackup(): Promise<boolean>;
+      saveScrollerVisibility(visible: boolean): Promise<{ path: string; storage: 'portable' | 'userData' }>;
       saveMapMask(settings: {
         light: number;
         dark: number;
@@ -85,6 +95,7 @@ interface Window {
       ): Promise<{ path: string; storage: 'portable' | 'userData' }>;
     };
     traffic: {
+      saveLog(filter: string): Promise<boolean>;
       getRecent(): Promise<
         Array<{
           id: string;
@@ -93,6 +104,8 @@ interface Window {
           interfaceName: string;
           packet: string;
           source: 'kiss';
+          direction: 'rx' | 'tx';
+          category?: 'own-beacon' | 'own-weather' | 'own-message';
         }>
       >;
       getInterfaceStatuses(): Promise<
@@ -106,6 +119,8 @@ interface Window {
           interfaceName: string;
           packet: string;
           source: 'kiss';
+          direction: 'rx' | 'tx';
+          category?: 'own-beacon' | 'own-weather' | 'own-message';
         }) => void,
       ): () => void;
       onInterfaceStatus(
