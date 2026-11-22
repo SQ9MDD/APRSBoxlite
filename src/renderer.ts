@@ -50,6 +50,8 @@ let selectedCallsign: string | undefined;
 let detailCallsign: string | undefined;
 const stationsViewState: StationsViewState = { filter: 'all', sort: 'lastHeard', direction: 'desc', search: '' };
 let messageRecipient: string | undefined;
+let messageInterfaceId = '';
+let messageInterfaceChanged = false;
 let messages: AprsMessage[] = [];
 let liveStations: Station[] = [];
 let updateStationMarkers: ((stations: Station[]) => void) | undefined;
@@ -359,6 +361,7 @@ async function loadConfiguration(): Promise<void> {
     applyTheme();
     applyStoredStationConfiguration(configuration);
     applyStoredInterfaces(configuration);
+    if (!messageInterfaceChanged && typeof configuration.messageInterfaceId === 'string') messageInterfaceId = configuration.messageInterfaceId;
     const viewport = configuration.mapViewport as
       | Partial<MapViewport>
       | undefined;
@@ -548,6 +551,7 @@ const pageRenderers: Record<
       messageRecipient,
       interfaces,
       interfaceStatuses,
+      messageInterfaceId,
     ),
   settings: () =>
     renderSettingsView(
@@ -977,6 +981,7 @@ function updateMessages(next: AprsMessage[]): void {
       messageRecipient,
       interfaces,
       interfaceStatuses,
+      messageInterfaceId,
     ).html;
     list.innerHTML =
       template.content.querySelector('.messages-conversations')?.innerHTML ??
@@ -1002,6 +1007,14 @@ function renderApp(): void {
     document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
   appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView)}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, activeSettingsSection, `${stationSettings.callsign}${stationSettings.ssid}`, mapMaskOpacity[resolvedTheme], detailCallsign ? '' : renderStationFilters(liveStations, stationsViewState.filter), interfaces, interfaceStatuses, activeView === 'traffic' ? renderTrafficFilter(trafficFrames, trafficFilter) : '', activeView === 'stations' && !detailCallsign ? renderStationSearch(liveStations, stationsViewState) : '')}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}`;
   updateBleDevices();
+  appRoot.querySelector<HTMLSelectElement>('[data-message-send] select[name="interfaceId"]')?.addEventListener('change', (event) => {
+    messageInterfaceId = (event.currentTarget as HTMLSelectElement).value;
+    messageInterfaceChanged = true;
+    void window.aprsbox.config.saveMessageInterface(messageInterfaceId).catch((error) => {
+      const output = appRoot.querySelector<HTMLElement>('[data-message-error]');
+      if (output) output.textContent = `Could not save interface selection: ${String(error)}`;
+    });
+  });
   appRoot.querySelector<HTMLButtonElement>('[data-action="ble-scan"]')?.addEventListener('click', () => {
     if (!interfaceDraft.id) interfaceDraft.id = crypto.randomUUID();
     const interfaceId = interfaceDraft.id;

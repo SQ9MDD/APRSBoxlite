@@ -46,6 +46,7 @@ interface Window {
       getMapCacheStats(id: string): Promise<{ count: number; bytes: number }>;
       clearMapCache(id: string): Promise<void>;
       saveMapSettings(settings: import('./mapSettings').MapSettings): Promise<{ path: string; storage: 'portable' | 'userData' }>;
+      saveMessageInterface(id: string): Promise<{ path: string; storage: 'portable' | 'userData' }>;
       exportBackup(): Promise<boolean>;
       importBackup(): Promise<boolean>;
       saveScrollerVisibility(visible: boolean): Promise<{ path: string; storage: 'portable' | 'userData' }>;

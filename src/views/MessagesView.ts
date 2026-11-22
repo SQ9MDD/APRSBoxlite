@@ -45,6 +45,7 @@ export function renderMessagesView(
   recipient: string | undefined,
   interfaces: InterfaceSettings[],
   statuses: Record<string, string>,
+  selectedInterfaceId = '',
 ): { html: string } {
   const conversations = [
     ...new Set([...messages].reverse().filter(visibleMessage).map(conversationFor)),
@@ -57,7 +58,7 @@ export function renderMessagesView(
   const options = eligible
     .map(
       (item) =>
-        `<option value="${escapeHtml(item.id)}" ${statuses[item.id] === 'connected' ? '' : 'disabled'}>${escapeHtml(item.name || item.hostPort || item.serialDevice)} · ${escapeHtml(statuses[item.id] ?? 'disconnected')}</option>`,
+        `<option value="${escapeHtml(item.id)}" ${item.id === selectedInterfaceId ? 'selected' : ''} ${statuses[item.id] === 'connected' ? '' : 'disabled'}>${escapeHtml(item.name || item.hostPort || item.serialDevice || item.id)} · ${escapeHtml(statuses[item.id] ?? 'disconnected')}</option>`,
     )
     .join('');
   return {

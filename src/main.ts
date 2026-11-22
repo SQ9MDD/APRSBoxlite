@@ -548,6 +548,11 @@ app.whenReady().then(async () => {
       },
     );
   });
+  ipcMain.handle('config:save-message-interface', (_event, id: unknown) => {
+    if (typeof id !== 'string' || id.length > 80) throw new Error('Invalid message interface.');
+    if (id && !validateInterfaces(configStorage.getConfiguration().interfaces ?? []).some((item) => item.id === id && item.enabled && !item.txBlocked)) throw new Error('Message interface is unavailable.');
+    return updateConfig({ messageInterfaceId: id });
+  });
   ipcMain.handle('config:export-backup', async () => {
     const result = await dialog.showSaveDialog({ title: 'Export configuration backup', defaultPath: 'APRSBoxLite-config-backup.json', filters: [{ name: 'JSON', extensions: ['json'] }] });
     if (result.canceled || !result.filePath) return false;
