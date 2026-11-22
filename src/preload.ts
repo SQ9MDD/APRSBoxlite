@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
     },
   },
   messages: {
+    saveGroups: (groups: { rf: string[]; aprsIs: string[] }): Promise<void> => ipcRenderer.invoke('config:save-message-groups', groups),
     get: (): Promise<AprsMessage[]> => ipcRenderer.invoke('messages:get'),
     markRead: (recipient: string): Promise<void> => ipcRenderer.invoke('messages:mark-read', recipient),
     deleteConversation: (recipient: string): Promise<void> => ipcRenderer.invoke('messages:delete-conversation', recipient),

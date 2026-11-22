@@ -1,10 +1,20 @@
+import { readMessageGroups } from '../messageGroups';
+import type { MessageGroups } from '../messageGroups';
 import type { AprsMessage } from '../types';
 import { parseMessageControl } from '../aprsMessageControl';
 import { unwrapAprsPacket } from './aprsPosition';
 import { KissFrameDecoder } from './kissTcpRx';
 
 const CALLSIGN = /^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/;
-const GROUPS = new Set(['ALL', 'QST', 'CQ']);
+const LEGACY_GROUPS = new Set(['ALL', 'QST', 'CQ']);
+function conversationFor(message: AprsMessage): string {
+  return message.direction === 'tx' ? message.recipient : (message.group ?? LEGACY_GROUPS.has(message.recipient)) ? message.recipient : message.sender;
+}
+function normalizeMessageAddress(value: string): string {
+  const address = value.trim().toUpperCase();
+  if (/^[A-Z0-9]{1,9}$/.test(address)) return address;
+  return normalizeCallsign(address);
+}
 const RETRY_DELAYS = [8_000, 16_000, 32_000];
 const DEDUPLICATION_AGE = 60 * 60 * 1000;
 const MAX_MESSAGES = 1000;
@@ -22,7 +32,7 @@ export function encodeKissMessage(
   text: string,
   path: string,
 ): Uint8Array {
-  const info = `:${normalizeCallsign(recipient).padEnd(9, ' ')}:${text}`;
+  const info = `:${normalizeMessageAddress(recipient).padEnd(9, ' ')}:${text}`;
   return encodeKissFrame(source, info, path);
 }
 
@@ -125,6 +135,8 @@ export class MessageService {
   ) => Promise<void>;
   private readonly onChange: (messages: AprsMessage[]) => void;
   private readonly querySettings?: (sender: string) => QuerySettings;
+  private readonly groups: () => MessageGroups;
+  private readonly isAprsIs: (interfaceId: string) => boolean;
 
   constructor(
     ownCallsign: () => string,
@@ -132,11 +144,15 @@ export class MessageService {
     onChange: (messages: AprsMessage[]) => void,
     initialMessages: AprsMessage[] = [],
     querySettings?: (sender: string) => QuerySettings,
+    groups: () => MessageGroups = () => readMessageGroups(undefined),
+    isAprsIs: (interfaceId: string) => boolean = () => false,
   ) {
     this.ownCallsign = ownCallsign;
     this.transmit = transmit;
     this.onChange = onChange;
     this.querySettings = querySettings;
+    this.groups = groups;
+    this.isAprsIs = isAprsIs;
     this.messages = structuredClone(initialMessages.slice(-MAX_MESSAGES)).map((message) =>
       message.status === 'pending'
         ? { ...message, status: 'failed', error: 'Interrupted by application restart. Retry if needed.' }
@@ -149,19 +165,19 @@ export class MessageService {
   }
 
   markConversationRead(recipient: string): void {
-    const target = normalizeCallsign(recipient);
+    const target = normalizeMessageAddress(recipient);
     let changed = false;
     for (const message of this.messages) {
-      const conversation = message.direction === 'tx' ? message.recipient : GROUPS.has(message.recipient) ? message.recipient : message.sender;
+      const conversation = conversationFor(message);
       if (conversation === target && this.unreadIds.delete(message.id)) changed = true;
     }
     if (changed) this.publish();
   }
 
   deleteConversation(recipient: string): void {
-    const target = normalizeCallsign(recipient);
+    const target = normalizeMessageAddress(recipient);
     const removed = this.messages.filter((message) =>
-      (message.direction === 'tx' ? message.recipient : GROUPS.has(message.recipient) ? message.recipient : message.sender) === target,
+      conversationFor(message) === target,
     );
     if (!removed.length) return;
     for (const message of removed) {
@@ -181,7 +197,10 @@ export class MessageService {
     path: string,
   ): Promise<void> {
     const source = normalizeCallsign(this.ownCallsign());
-    const target = normalizeCallsign(recipient);
+    const target = normalizeMessageAddress(recipient);
+    const groups = this.groups();
+    const group = (this.isAprsIs(interfaceId) ? groups.aprsIs : groups.rf).includes(target);
+    if (!group) normalizeCallsign(target);
     const body = text.trim();
     if (
       !body ||
@@ -192,7 +211,6 @@ export class MessageService {
       throw new Error(
         'Use 1–67 printable ASCII characters, excluding { and }.',
       );
-    const group = GROUPS.has(target);
     const number = group || body.startsWith('?') ? undefined : this.allocateNumber(target);
     const info = body + (number ? `{${number}` : '');
     const frame = encodeKissMessage(source, target, info, path);
@@ -202,6 +220,7 @@ export class MessageService {
       recipient: target,
       text: body,
       direction: 'tx',
+      ...(group ? { group: true } : {}),
       status: 'pending',
       number,
       path: path.toUpperCase(),
@@ -225,7 +244,9 @@ export class MessageService {
     }
     if (parsed.sender === local) return;
     const direct = parsed.addressee === local;
-    if (!direct && !GROUPS.has(parsed.addressee)) return;
+    const groups = this.groups();
+    const group = !direct && (this.isAprsIs(interfaceId) ? groups.aprsIs : groups.rf).includes(parsed.addressee);
+    if (!direct && !group) return;
     if (parsed.control) {
       if (direct)
         this.resolveAcknowledgement(
@@ -259,6 +280,7 @@ export class MessageService {
         recipient: parsed.addressee,
         text: parsed.text,
         direction: 'rx',
+        ...(group ? { group: true } : {}),
         status: 'received',
         number: parsed.number,
         path: isQuery ? (unwrapAprsPacket(packet)?.match(/^[^>]+>[^,:]+(?:,([^:]*))?:/)?.[1] ?? '') : '',

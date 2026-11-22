@@ -4,7 +4,7 @@ import test from 'node:test';
 import type { AprsMessage } from '../src/types.ts';
 
 registerHooks({ resolve(specifier, context, next) {
-  return next(['../aprsMessageControl', '../components/escapeHtml'].includes(specifier) ? `${specifier}.ts` : specifier, context);
+  return next(['../messageGroups', '../aprsMessageControl', '../components/escapeHtml'].includes(specifier) ? `${specifier}.ts` : specifier, context);
 } });
 const { isVisibleInConversation, renderMessageHistory, renderMessagesView } = await import('../src/views/MessagesView.ts');
 
@@ -43,4 +43,13 @@ test('shows a delete button for each conversation', () => {
   const html = renderMessagesView([], 'SP5ABC', [], {}).html;
   assert.match(html, /data-delete-conversation="SP5ABC"/);
   assert.match(html, /aria-label="Delete conversation SP5ABC"/);
+});
+
+test('renders separate RF and APRS-IS group settings and groups messages by addressee', () => {
+  const message: AprsMessage = { id: 'group', sender: 'SP5ABC', recipient: 'LOCALTEST', text: 'Hello', direction: 'rx', group: true, status: 'received', path: '', interfaceId: 'radio', attempts: 0, createdAt: new Date().toISOString() };
+  const html = renderMessagesView([message], 'LOCALTEST', [], {}, '', '', { rf: ['LOCALTEST'], aprsIs: ['CQ', 'NET'] }).html;
+  assert.match(html, /name="rf" value="LOCALTEST"/);
+  assert.match(html, /name="aprsIs" value="CQ, NET"/);
+  assert.match(html, /data-message-conversation="LOCALTEST"/);
+  assert.equal(isVisibleInConversation(message, 'LOCALTEST'), true);
 });

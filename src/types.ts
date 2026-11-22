@@ -7,6 +7,7 @@ export interface AprsMessage {
   text: string;
   direction: 'rx' | 'tx';
   unread?: boolean;
+  group?: boolean;
   status: 'received' | 'pending' | 'sent' | 'acked' | 'rejected' | 'failed';
   number?: string;
   path: string;

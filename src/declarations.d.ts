@@ -24,6 +24,7 @@ interface Window {
       onResume(callback: () => void): () => void;
     };
     messages: {
+      saveGroups(groups: { rf: string[]; aprsIs: string[] }): Promise<void>;
       get(): Promise<import('./types').AprsMessage[]>;
       markRead(recipient: string): Promise<void>;
       deleteConversation(recipient: string): Promise<void>;

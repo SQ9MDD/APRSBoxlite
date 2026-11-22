@@ -1,4 +1,5 @@
 :root {
+  --view-padding: 16px 18px;
   color: #dce8f6;
   background: #08111c;
   font-family:
@@ -603,7 +604,7 @@ button {
   white-space: nowrap;
 }
 .standard-view {
-  padding: 32px;
+  padding: var(--view-padding);
 }
 .view-heading {
   display: flex;
@@ -749,7 +750,7 @@ button {
   flex-direction: column;
   gap: 10px;
   height: 100%;
-  padding: 16px 18px;
+  padding: var(--view-padding);
 }
 
 .traffic-table {
@@ -1042,9 +1043,6 @@ button {
   }
   .sidebar {
     padding-inline: 12px;
-  }
-  .standard-view {
-    padding: 24px;
   }
 }
 
@@ -1731,7 +1729,7 @@ button {
   height: 100%;
   min-height: 100%;
   overflow: auto;
-  padding: 26px 32px;
+  padding: var(--view-padding);
   background: #08111c;
 }
 
@@ -1785,12 +1783,15 @@ button {
 }
 
 .configuration-form {
+  min-width: 0;
   max-width: 760px;
   padding: 20px;
 }
 
 .form-grid {
   display: grid;
+  min-width: 0;
+  align-content: start;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
@@ -1891,6 +1892,7 @@ button {
 
 .form-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
@@ -1915,13 +1917,14 @@ button {
 
 .interfaces-workspace {
   display: grid;
-  max-width: 1380px;
-  grid-template-columns: minmax(500px, 1.15fr) minmax(430px, 0.85fr);
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 18px;
 }
 
 .interface-list {
-  min-height: 342px;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -2538,7 +2541,7 @@ button {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
   height: 100%;
-  padding: 16px;
+  padding: var(--view-padding);
   gap: 12px;
 }
 .messages-sidebar,
@@ -2654,11 +2657,13 @@ button {
 }
 .messages-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: end;
 }
 .messages-controls label {
-  flex: 1;
+  flex: 1 1 140px;
+  min-width: 0;
 }
 .messages-composer small {
   color: #9cb2c9;
@@ -2777,12 +2782,12 @@ button {
 }
 
 /* Stations: compact live directory, based on the APRSBox station list. */
-.stations-view { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 20px; }
+.stations-view { height: 100%; min-height: 0; display: flex; flex-direction: column; padding: var(--view-padding); }
 .stations-filters { display: flex; align-items: center; gap: 8px; }
 .stations-filter { display: flex; align-items: center; gap: 6px; height: 36px; min-width: 58px; padding: 6px 9px; border: 1px solid #294966; border-radius: 7px; color: #c8daec; background: #11243a; cursor: pointer; }
 .stations-filter:hover, .stations-filter.is-active { border-color: #4b9cdb; background: #183b5b; }
 .stations-filter img { width: 20px; height: 20px; filter: invert(86%) sepia(18%) saturate(520%) hue-rotate(171deg) brightness(94%) contrast(90%); }
-.stations-table-wrap { min-height: 0; overflow: auto; border: 1px solid #274560; border-radius: 9px; background: #0e1d2e; scrollbar-color: #466985 #102338; }
+.stations-table-wrap { flex: 1; min-width: 0; min-height: 0; overflow: auto; border: 1px solid #274560; border-radius: 9px; background: #0e1d2e; scrollbar-color: #466985 #102338; }
 .stations-table { width: 100%; min-width: 1050px; border-collapse: collapse; color: #a7bbce; font-size: 12px; text-align: left; }
 .stations-table th { position: sticky; top: 0; z-index: 1; padding: 11px 12px; color: #90aac2; background: #11243a; white-space: nowrap; }
 .stations-table th button { padding: 0; border: 0; color: inherit; background: transparent; font: inherit; font-weight: inherit; cursor: pointer; }
@@ -2810,14 +2815,14 @@ button {
 :root[data-theme='light'] .stations-table tbody tr[data-station]:hover, :root[data-theme='light'] .stations-table tbody tr[data-station]:focus-visible { background: #edf6fd; }
 :root[data-theme='light'] .stations-data span { background: #e7eff6; }
 
-.station-detail-view { height: 100%; overflow: auto; padding: 24px 32px; display: grid; align-content: start; gap: 16px; scrollbar-color: #466985 #102338; }
+.station-detail-view { height: 100%; overflow: auto; padding: var(--view-padding); display: grid; align-content: start; gap: 16px; scrollbar-color: #466985 #102338; }
 .station-detail-panel { min-width: 0; padding: 18px; border: 1px solid #294966; border-radius: 9px; background: #0e1d2e; color: #d7e5f5; }
 .station-detail-panel h2 { margin: 0 0 15px; font-size: 16px; }
-.station-detail-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.station-detail-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
 .station-detail-header h2 { margin: 0; font-size: 20px; }
 .station-detail-header p, .station-detail-muted, .station-detail-device p { margin: 7px 0 0; color: #819bb3; font-size: 12px; }
 .station-detail-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.station-detail-hero { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .9fr); gap: 16px; }
+.station-detail-hero { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, .9fr); align-items: start; gap: 16px; }
 .station-detail-fields { display: grid; grid-template-columns: minmax(110px, max-content) minmax(0, 1fr); gap: 9px 16px; margin: 0; font-size: 12px; }
 .station-detail-fields dt { color: #819bb3; }
 .station-detail-fields dd { margin: 0; overflow-wrap: anywhere; }
@@ -2870,7 +2875,7 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-areas: 'general identification' 'general backup' 'maps maps';
   gap: 16px;
-  max-width: 1200px;
+  width: 100%;
 }
 .general-card { grid-area: general; }
 .identification-card { grid-area: identification; }
@@ -2878,20 +2883,27 @@ button {
 .map-sources-card { grid-area: maps; }
 .general-card .form-grid { grid-template-columns: minmax(0, 1fr); }
 .general-settings .form-actions { flex-wrap: wrap; }
-.general-settings .configuration-form { max-width: none; }
+.general-settings .configuration-form { max-width: none; align-self: start; }
 .general-settings h3 { margin: 0 0 16px; font-size: 16px; }
 .general-muted { color: #819bb3; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.general-map-sources { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 1fr); gap: 20px; }
+.general-map-sources { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 20px; }
 .general-source-table { overflow-x: auto; }
 .general-source-table table { width: 100%; border-collapse: collapse; font-size: 12px; color: #c8daec; }
 .general-source-table th, .general-source-table td { padding: 9px; border-bottom: 1px solid #294761; text-align: left; }
 .general-source-table th { color: #819bb3; }
-.general-source-table td:last-child { white-space: nowrap; }
-.general-source-table button { padding: 5px 8px; font-size: 11px; }
+.general-source-table th, .general-source-table td { white-space: nowrap; }
+.map-source-actions { display: flex; align-items: center; gap: 6px; }
+.general-source-table .icon-action-button { padding: 0; }
+.general-source-table .icon-action-button:disabled { opacity: .45; cursor: default; }
+.general-source-table .map-default-button.is-current { opacity: 1; }
+.general-source-table .map-default-button.is-current img { filter: invert(73%) sepia(30%) saturate(669%) hue-rotate(355deg) brightness(99%) contrast(89%); }
+:root[data-theme='light'] .general-source-table .icon-action-button:not(.is-danger) img { filter: invert(20%) sepia(33%) saturate(1800%) hue-rotate(171deg) brightness(94%); }
+:root[data-theme='light'] .general-source-table .map-default-button.is-current img { filter: invert(39%) sepia(54%) saturate(656%) hue-rotate(8deg) brightness(97%) contrast(90%); }
 :root[data-theme='light'] .general-source-table table { color: #334e67; }
 :root[data-theme='light'] .general-source-table th, :root[data-theme='light'] .general-source-table td { border-color: #cfdae5; }
 @media (max-width: 1250px) { .general-map-sources { grid-template-columns: 1fr; } }
-@media (max-width: 1050px) {
+@media (max-width: 1200px) {
+  .interfaces-workspace { grid-template-columns: minmax(0, 1fr); }
   .general-settings {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: 'general' 'identification' 'backup' 'maps';
@@ -2936,3 +2948,12 @@ button {
 .nav-item.has-unread .nav-icon { filter: invert(73%) sepia(30%) saturate(669%) hue-rotate(355deg) brightness(99%) contrast(89%); }
 :root[data-theme='light'] .nav-item.has-unread, :root[data-theme='light'] .nav-item.has-unread:hover, :root[data-theme='light'] .nav-item.has-unread.is-active { color: #8f6b1d; }
 :root[data-theme='light'] .nav-item.has-unread .nav-icon { filter: invert(39%) sepia(54%) saturate(656%) hue-rotate(8deg) brightness(97%) contrast(90%); }
+
+.messages-groups { display: grid; gap: 8px; padding: 12px; border-top: 1px solid #315474; }
+.messages-groups label { display: grid; gap: 5px; font-size: 12px; }
+.messages-groups input { min-width: 0; width: 100%; padding: 7px; border: 1px solid #315474; border-radius: 5px; background: #0a1725; color: #e9f3ff; }
+.messages-groups button { justify-self: end; }
+.messages-groups small { color: #9cb2c9; overflow-wrap: anywhere; }
+:root[data-theme='light'] .messages-groups { border-color: #cfdae5; }
+:root[data-theme='light'] .messages-groups input { background: #fff; color: #172b3c; border-color: #a9c3d8; }
+:root[data-theme='light'] .messages-groups small { color: #50697e; }

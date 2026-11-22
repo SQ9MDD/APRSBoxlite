@@ -6,7 +6,7 @@ import type net from 'node:net';
 import type { TrafficFrame } from '../src/main/kissTcpRx.ts';
 
 registerHooks({ resolve(specifier, context, next) {
-  return next(['./kissTcpRx', './aprsPosition', './tocalls', './aprsExtensions', '../aprsMessageControl', '../aprsIsFilter'].includes(specifier) ? `${specifier}.ts` : specifier, context);
+  return next(['./kissTcpRx', './aprsPosition', './tocalls', './aprsExtensions', '../messageGroups', '../aprsMessageControl', '../aprsIsFilter'].includes(specifier) ? `${specifier}.ts` : specifier, context);
 } });
 const { AprsIsRxService, makeAprsIsTarget, aprsIsPasscode } = await import('../src/main/aprsIsRx.ts');
 const { encodeKissMessage, encodeKissFrame, MessageService } = await import('../src/main/aprsMessages.ts');
@@ -29,8 +29,8 @@ test('forms range filter from configured location and rejects invalid settings',
   assert.equal(aprsIsPasscode('SQ9MDD-15'), aprsIsPasscode('SQ9MDD'));
   const target = makeAprsIsTarget(config, station);
   assert.equal(target?.login, 'SQ9MDD-15');
-  assert.equal(target?.filter, 'r/52.25/20.9/25');
-  assert.equal(makeAprsIsTarget({ ...config, aprsIsFilter: 'r/52.25/20.9/25 b/SP5ABC' }, station)?.filter, 'r/52.25/20.9/25 b/SP5ABC');
+  assert.equal(target?.filter, 'r/52.25/20.9/25 g/ALL/QST/CQ');
+  assert.equal(makeAprsIsTarget({ ...config, aprsIsFilter: 'r/52.25/20.9/25 b/SP5ABC' }, station)?.filter, 'r/52.25/20.9/25 b/SP5ABC g/ALL/QST/CQ');
   assert.equal(makeAprsIsTarget({ ...config, aprsIsFilter: 'b/SP5ABC\nfilter t/m' }, station), undefined);
   assert.equal(makeAprsIsTarget(config, { ...station, ssid: '-0' })?.login, 'SQ9MDD');
   assert.equal(makeAprsIsTarget(config, { ...station, location: 'invalid' }), undefined);
@@ -50,7 +50,7 @@ test('logs in, receives fragmented lines, sends only verified local packets, and
     service.configure([config], station);
     const socket = sockets[0];
     socket.emit('connect');
-    assert.equal(socket.writes[0], `user SQ9MDD-15 pass ${aprsIsPasscode('SQ9MDD')} vers APRSBoxLite 0.1.1-beta filter r/52.25/20.9/25\r\n`);
+    assert.equal(socket.writes[0], `user SQ9MDD-15 pass ${aprsIsPasscode('SQ9MDD')} vers APRSBoxLite 0.1.1-beta filter r/52.25/20.9/25 g/ALL/QST/CQ\r\n`);
     socket.emit('data', Buffer.from('# logresp SQ9MDD-15 unverified, server TEST\r\n'));
     socket.emit('data', Buffer.from('# server ready\r\nSP5ABC>APRS,TCPIP*,qAC,TEST:!5223.'));
     socket.emit('data', Buffer.from('45N/02101.23E>Test\r\ninvalid\r\n'));
@@ -167,13 +167,33 @@ test('sends editable filters at login and reconnects when they change', () => {
   try {
     service.configure([{ ...config, aprsIsFilter: 'r/52.25/20.9/25 b/SP5ABC' }], station);
     sockets[0].emit('connect');
-    assert.match(sockets[0].writes[0], / filter r\/52\.25\/20\.9\/25 b\/SP5ABC\r\n$/);
+    assert.match(sockets[0].writes[0], / filter r\/52\.25\/20\.9\/25 b\/SP5ABC g\/ALL\/QST\/CQ\r\n$/);
     service.configure([{ ...config, aprsIsFilter: 't/m' }], station);
     assert.equal(sockets[0].destroyed, true);
     sockets[1].emit('connect');
-    assert.match(sockets[1].writes[0], / filter t\/m\r\n$/);
+    assert.match(sockets[1].writes[0], / filter t\/m g\/ALL\/QST\/CQ\r\n$/);
     service.configure([{ ...config, aprsIsFilter: '' }], station);
     sockets[2].emit('connect');
-    assert.doesNotMatch(sockets[2].writes[0], / filter /);
+    assert.match(sockets[2].writes[0], / filter g\/ALL\/QST\/CQ\r\n$/);
+  } finally { service.stop(); }
+});
+
+test('changes group subscriptions by reconnecting and preserves user filters', () => {
+  const sockets: FakeSocket[] = [];
+  const service = new AprsIsRxService(() => undefined, () => undefined, '1', () => {
+    const socket = new FakeSocket(); sockets.push(socket); return socket as unknown as net.Socket;
+  });
+  try {
+    const item = { ...config, aprsIsFilter: 'r/52/21/25 g/CQ b/SP5ABC' };
+    service.configure([item], station, ['CQ', 'LOCAL']);
+    sockets[0].emit('connect');
+    assert.match(sockets[0].writes[0], /filter r\/52\/21\/25 g\/CQ b\/SP5ABC g\/LOCAL\r\n$/);
+    service.configure([item], station, ['CQ', 'OTHER']);
+    assert.equal(sockets[0].destroyed, true);
+    sockets[1].emit('connect');
+    assert.match(sockets[1].writes[0], /g\/CQ b\/SP5ABC g\/OTHER\r\n$/);
+    service.configure([item], station, []);
+    sockets[2].emit('connect');
+    assert.match(sockets[2].writes[0], /filter r\/52\/21\/25 g\/CQ b\/SP5ABC\r\n$/);
   } finally { service.stop(); }
 });

@@ -6,7 +6,7 @@ import type { AprsMessage } from '../src/types.ts';
 
 registerHooks({
   resolve(specifier, context, next) {
-    return next(['../aprsMessageControl', './aprsPosition', './kissTcpRx'].includes(specifier) ? `${specifier}.ts` : specifier, context);
+    return next(['../messageGroups', '../aprsMessageControl', './aprsPosition', './kissTcpRx'].includes(specifier) ? `${specifier}.ts` : specifier, context);
   },
 });
 
@@ -367,5 +367,28 @@ test('tracks unread incoming conversations until opened or deleted', () => {
     assert.equal(service.snapshot().at(-1)?.unread, true);
     service.markConversationRead('ALL');
     assert.equal(service.snapshot().at(-1)?.unread, false);
+  } finally { service.dispose(); }
+});
+
+test('separates RF and APRS-IS message groups without ACKs or query responses', async () => {
+  const frames: Uint8Array[] = [];
+  const groups = { rf: ['LOCALRF', 'NINE12345'], aprsIs: ['LOCALIS', 'NINE12345'] };
+  const service = new MessageService(() => 'SQ9MDD-4', async (_id, frame) => { frames.push(frame); }, () => undefined, [], () => ({ version: '1', path: '', position: () => new Uint8Array() }), () => groups, (id) => id === 'internet');
+  try {
+    service.receive('SP8ABC>APRS::LOCALRF  :RF{11', 'radio');
+    service.receive('SP8ABC>APRS::LOCALRF  :Wrong network{12', 'internet');
+    service.receive('SP8XYZ>APRS::LOCALIS  :Internet{13', 'internet');
+    service.receive('SP8XYZ>APRS::LOCALIS  :Wrong network{14', 'radio');
+    service.receive('SP8XYZ>APRS::NINE12345:?VER{15', 'internet');
+    service.receive('SP8XYZ>APRS::UNKNOWN  :Ignored{16', 'radio');
+    assert.deepEqual(service.snapshot().map((message) => [message.recipient, message.group]), [['LOCALRF', true], ['LOCALIS', true], ['NINE12345', true]]);
+    assert.equal(frames.length, 0);
+    await service.send('NINE12345', 'Hello group', 'internet', '');
+    assert.match(new KissFrameDecoder().consume(frames[0])[0], /::NINE12345:Hello group$/);
+    assert.equal(service.snapshot().at(-1)?.number, undefined);
+    service.markConversationRead('NINE12345');
+    assert.equal(service.snapshot().find((message) => message.recipient === 'NINE12345' && message.direction === 'rx')?.unread, false);
+    service.deleteConversation('NINE12345');
+    assert.equal(service.snapshot().some((message) => message.recipient === 'NINE12345'), false);
   } finally { service.dispose(); }
 });

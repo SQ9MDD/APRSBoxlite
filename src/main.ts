@@ -1,4 +1,5 @@
-import { validAprsIsFilter } from './aprsIsFilter';
+import { appendAprsIsGroups, readMessageGroups } from './messageGroups';
+import { defaultAprsIsFilter, validAprsIsFilter } from './aprsIsFilter';
 import { app, BrowserWindow, dialog, ipcMain, net, powerMonitor, protocol, session } from 'electron';
 import path from 'node:path';
 import * as fs from 'node:fs/promises';
@@ -371,12 +372,16 @@ app.whenReady().then(async () => {
     bleWrites.set(requestId, { sender: window.webContents, resolve, reject, timer });
     window.webContents.send('ble:write', { requestId, interfaceId, bytes });
   }));
+  const getMessageGroups = () => {
+    try { return readMessageGroups(configStorage.getConfiguration().messageGroups); }
+    catch { return readMessageGroups(undefined); }
+  };
   const configureKiss = (interfaces: InterfaceConfiguration[]) => {
     const wired = interfaces.filter((item): item is InterfaceConfiguration & { type: 'kiss-tcp' | 'kiss-serial' } => item.type === 'kiss-tcp' || item.type === 'kiss-serial');
     kissTcpRxService.configure(wired);
     kissSerialRxService.configure(wired);
     kissBleRxService.configure(interfaces);
-    aprsIsRxService.configure(interfaces, configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown; location?: unknown } | undefined);
+    aprsIsRxService.configure(interfaces, configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown; location?: unknown } | undefined, getMessageGroups().aprsIs);
   };
   ipcMain.on('ble:status', (event, id: unknown, status: unknown) => {
     if (!BrowserWindow.fromWebContents(event.sender) || typeof id !== 'string' || !['connecting', 'connected', 'disconnected', 'error'].includes(String(status))) return;
@@ -436,6 +441,8 @@ app.whenReady().then(async () => {
         position: () => encodeBeacon({ ...validateStationConfiguration(config.station), beaconPath: path }),
       };
     },
+    getMessageGroups,
+    (id) => aprsIsRxService.isConfigured(id),
   );
   if (storedMessages.some((message) => message.status === 'pending'))
     persistMessages(messageService.snapshot());
@@ -530,7 +537,7 @@ app.whenReady().then(async () => {
   scheduleBeacon();
   ipcMain.handle('config:save-station', (_event, station: unknown) =>
     updateConfig({ station: validateStationConfiguration(station) }).then((location) => {
-      aprsIsRxService.configure(validateInterfaces(configStorage.getConfiguration().interfaces ?? []), configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown; location?: unknown } | undefined);
+      aprsIsRxService.configure(validateInterfaces(configStorage.getConfiguration().interfaces ?? []), configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown; location?: unknown } | undefined, getMessageGroups().aprsIs);
       scheduleBeacon();
       return location;
     }),
@@ -583,8 +590,16 @@ app.whenReady().then(async () => {
     }
     return updateConfig({ mapViewport: { latitude, longitude, zoom } });
   });
+  const validateGroupFilters = (interfaces: InterfaceConfiguration[], groups: string[]) => {
+    const station = configStorage.getConfiguration().station as { location?: unknown } | undefined;
+    for (const item of interfaces.filter((entry) => entry.type === 'aprs-is')) {
+      const filter = item.aprsIsFilter ?? defaultAprsIsFilter(station?.location, item.aprsIsRadius || '25') ?? '';
+      if (!validAprsIsFilter(appendAprsIsGroups(filter, groups))) throw new Error('APRS-IS filters and groups are too long.');
+    }
+  };
   ipcMain.handle('config:save-interfaces', (_event, interfaces: unknown) => {
     const validatedInterfaces = validateInterfaces(interfaces);
+    validateGroupFilters(validatedInterfaces, getMessageGroups().aprsIs);
     return updateConfig({ interfaces: validatedInterfaces }).then(
       (location) => {
         configureKiss(validatedInterfaces);
@@ -592,19 +607,29 @@ app.whenReady().then(async () => {
       },
     );
   });
+  ipcMain.handle('config:save-message-groups', (_event, value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !('rf' in value) || !('aprsIs' in value)) throw new Error('Invalid message group settings.');
+    const groups = readMessageGroups(value);
+    const interfaces = validateInterfaces(configStorage.getConfiguration().interfaces ?? []);
+    validateGroupFilters(interfaces, groups.aprsIs);
+    return updateConfig({ messageGroups: groups }).then((location) => {
+      aprsIsRxService.configure(validateInterfaces(configStorage.getConfiguration().interfaces ?? []), configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown; location?: unknown } | undefined, groups.aprsIs);
+      return location;
+    });
+  });
   ipcMain.handle('config:save-message-interface', (_event, id: unknown) => {
     if (typeof id !== 'string' || id.length > 80) throw new Error('Invalid message interface.');
     if (id && !validateInterfaces(configStorage.getConfiguration().interfaces ?? []).some((item) => item.id === id && item.enabled && !item.txBlocked)) throw new Error('Message interface is unavailable.');
     return updateConfig({ messageInterfaceId: id });
   });
   ipcMain.handle('config:save-message-path', (_event, recipient: unknown, path: unknown) => {
-    if (typeof recipient !== 'string' || !/^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/.test(recipient) || typeof path !== 'string' || path.length > 71) throw new Error('Invalid conversation path.');
+    if (typeof recipient !== 'string' || !/^(?:[A-Z0-9]{1,9}|[A-Z0-9]{1,6}-(?:[0-9]|1[0-5]))$/.test(recipient) || typeof path !== 'string' || path.length > 71) throw new Error('Invalid conversation path.');
     const write = configWrites.then(async () => {
       const stored = configStorage.getConfiguration().messagePaths;
       const paths: Record<string, string> = {};
       if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
         for (const [key, value] of Object.entries(stored)) {
-          if (/^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/.test(key) && typeof value === 'string' && value.length <= 71) paths[key] = value;
+          if (/^(?:[A-Z0-9]{1,9}|[A-Z0-9]{1,6}-(?:[0-9]|1[0-5]))$/.test(key) && typeof value === 'string' && value.length <= 71) paths[key] = value;
         }
       }
       if (path) {

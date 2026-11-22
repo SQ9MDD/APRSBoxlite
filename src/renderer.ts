@@ -1,3 +1,4 @@
+import { normalizeMessageGroups, readMessageGroups } from './messageGroups';
 import { defaultAprsIsFilter } from './aprsIsFilter';
 import './index.css';
 import { scanBle, cancelBleScan, disconnectBle, reconcileBle, noteBleDevices, isBleScanning, isAnyBleScanning, hasBleLink, transmitBle } from './bleTransport';
@@ -54,6 +55,7 @@ let messageRecipient: string | undefined;
 let messageInterfaceId = '';
 let messageInterfaceChanged = false;
 let messagePaths: Record<string, string> = {};
+let messageGroups = readMessageGroups(undefined);
 const messagePathTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const modifiedMessagePaths = new Set<string>();
 let messages: AprsMessage[] = [];
@@ -65,6 +67,7 @@ let mapSettings: MapSettings = structuredClone(DEFAULT_MAP_SETTINGS);
 let mapSourceDraft: MapSource | undefined;
 const rulerState: RulerState = { measurementActive: false };
 let mountedView: AppView | undefined;
+let mountedMessageRecipient: string | undefined;
 let activeSettingsSection: SettingsSection = 'general';
 let selectedInterfaceId: string | undefined;
 let interfaces: InterfaceSettings[] = [];
@@ -368,10 +371,11 @@ async function loadConfiguration(): Promise<void> {
     applyTheme();
     applyStoredStationConfiguration(configuration);
     applyStoredInterfaces(configuration);
+    try { messageGroups = readMessageGroups(configuration.messageGroups); } catch { messageGroups = readMessageGroups(undefined); }
     if (!messageInterfaceChanged && typeof configuration.messageInterfaceId === 'string') messageInterfaceId = configuration.messageInterfaceId;
     if (configuration.messagePaths && typeof configuration.messagePaths === 'object' && !Array.isArray(configuration.messagePaths)) {
       for (const [recipient, path] of Object.entries(configuration.messagePaths)) {
-        if (!modifiedMessagePaths.has(recipient) && /^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/.test(recipient) && typeof path === 'string' && path.length <= 71) messagePaths[recipient] = path;
+        if (!modifiedMessagePaths.has(recipient) && /^(?:[A-Z0-9]{1,9}|[A-Z0-9]{1,6}-(?:[0-9]|1[0-5]))$/.test(recipient) && typeof path === 'string' && path.length <= 71) messagePaths[recipient] = path;
       }
     }
     const viewport = configuration.mapViewport as
@@ -565,6 +569,7 @@ const pageRenderers: Record<
       interfaceStatuses,
       messageInterfaceId,
       messageRecipient ? messagePaths[messageRecipient] ?? '' : '',
+      messageGroups,
     ),
   settings: () =>
     renderSettingsView(
@@ -955,12 +960,31 @@ appRoot.addEventListener('submit', (event) => {
     void saveMapSettings({ ...mapSettings, sources }, true);
     return;
   }
+  if (form.matches('[data-message-groups]')) {
+    event.preventDefault();
+    const output = form.querySelector<HTMLElement>('[data-message-groups-status]');
+    try {
+      const values = new FormData(form);
+      const next = { rf: normalizeMessageGroups(String(values.get('rf') ?? '')), aprsIs: normalizeMessageGroups(String(values.get('aprsIs') ?? '')) };
+      const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+      if (button) button.disabled = true;
+      void window.aprsbox.messages.saveGroups(next).then(() => {
+        messageGroups = next;
+        const rf = form.querySelector<HTMLInputElement>('[name="rf"]');
+        const aprsIs = form.querySelector<HTMLInputElement>('[name="aprsIs"]');
+        if (rf) rf.value = next.rf.join(', ');
+        if (aprsIs) aprsIs.value = next.aprsIs.join(', ');
+        if (output) output.textContent = 'Settings saved.';
+      }).catch((error) => { if (output) output.textContent = String(error); }).finally(() => { if (button) button.disabled = false; });
+    } catch (error) { if (output) output.textContent = error instanceof Error ? error.message : String(error); }
+    return;
+  }
   if (form.matches('[data-message-new]')) {
     event.preventDefault();
     const value = String(new FormData(form).get('recipient') ?? '')
       .trim()
       .toUpperCase();
-    if (!/^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/.test(value)) {
+    if (!/^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/.test(value) && !messageGroups.rf.includes(value) && !messageGroups.aprsIs.includes(value)) {
       const input = form.querySelector<HTMLInputElement>(
         'input[name="recipient"]',
       );
@@ -1044,6 +1068,7 @@ function updateMessages(next: AprsMessage[]): void {
       interfaceStatuses,
       messageInterfaceId,
       messageRecipient ? messagePaths[messageRecipient] ?? '' : '',
+      messageGroups,
     ).html;
     list.innerHTML =
       template.content.querySelector('.messages-conversations')?.innerHTML ??
@@ -1052,6 +1077,9 @@ function updateMessages(next: AprsMessage[]): void {
 }
 
 function renderApp(): void {
+  const previousHistory = mountedView === 'messages' && activeView === 'messages' && mountedMessageRecipient === messageRecipient
+    ? appRoot.querySelector<HTMLElement>('[data-message-history]') : null;
+  const previousScrollTop = previousHistory?.scrollTop;
   const page = pageRenderers[activeView]();
   const mapDrawer = renderMapDrawer();
   const existingMap =
@@ -1069,6 +1097,10 @@ function renderApp(): void {
     document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
   appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView, messages.some((message) => message.unread))}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, activeSettingsSection, `${stationSettings.callsign}${stationSettings.ssid}`, mapMaskOpacity[resolvedTheme], detailCallsign ? '' : renderStationFilters(liveStations, stationsViewState.filter), interfaces, interfaceStatuses, activeView === 'traffic' ? renderTrafficFilter(trafficFrames, trafficFilter) : '', activeView === 'stations' && !detailCallsign ? renderStationSearch(liveStations, stationsViewState) : '')}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}`;
   updateBleDevices();
+  if (activeView === 'messages' && messageRecipient) {
+    const history = appRoot.querySelector<HTMLElement>('[data-message-history]');
+    if (history) history.scrollTop = previousScrollTop ?? history.scrollHeight;
+  }
   const pathInput = appRoot.querySelector<HTMLInputElement>('[data-message-send] input[name="path"]');
   const pathRecipient = messageRecipient;
   if (pathInput && pathRecipient) {
@@ -1630,6 +1662,7 @@ function renderApp(): void {
       viewRoot && page.mount ? page.mount(viewRoot) : undefined;
   }
   mountedView = activeView;
+  mountedMessageRecipient = activeView === 'messages' ? messageRecipient : undefined;
   syncMessageUnread();
 }
 

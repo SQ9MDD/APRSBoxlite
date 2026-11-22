@@ -6,7 +6,7 @@ import { KissFrameDecoder } from '../src/main/kissTcpRx.ts';
 registerHooks({
   resolve(specifier, context, next) {
     return next(
-      ['./aprsMessages', './aprsPosition', './kissTcpRx', '../aprsMessageControl'].includes(specifier) ? `${specifier}.ts` : specifier,
+      ['./aprsMessages', './aprsPosition', './kissTcpRx', '../messageGroups', '../aprsMessageControl'].includes(specifier) ? `${specifier}.ts` : specifier,
       context,
     );
   },

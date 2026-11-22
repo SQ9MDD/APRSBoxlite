@@ -1,3 +1,4 @@
+import { appendAprsIsGroups, DEFAULT_MESSAGE_GROUPS } from '../messageGroups';
 import { defaultAprsIsFilter, validAprsIsFilter } from '../aprsIsFilter';
 import net from 'node:net';
 import { isUtf8 } from 'node:buffer';
@@ -30,12 +31,13 @@ export function aprsIsPasscode(callsign: string): string {
   return String(value & 0x7fff);
 }
 
-export function makeAprsIsTarget(item: AprsIsInterface, station: Station | undefined): Target | undefined {
+export function makeAprsIsTarget(item: AprsIsInterface, station: Station | undefined, groups: string[] = DEFAULT_MESSAGE_GROUPS): Target | undefined {
   const server = (item.aprsIsServer || 'rotate.aprs2.net:14580').trim().match(/^([^\s:]+):(\d{1,5})$/);
   const port = Number(server?.[2]);
   const call = typeof station?.callsign === 'string' ? station.callsign.trim().toUpperCase() : '';
   const ssid = typeof station?.ssid === 'string' ? station.ssid : '';
-  const filter = item.aprsIsFilter === undefined ? defaultAprsIsFilter(station?.location, item.aprsIsRadius || '25') : item.aprsIsFilter.trim();
+  const configuredFilter = item.aprsIsFilter === undefined ? defaultAprsIsFilter(station?.location, item.aprsIsRadius || '25') : item.aprsIsFilter.trim();
+  const filter = configuredFilter === undefined ? undefined : appendAprsIsGroups(configuredFilter, groups);
   const passcode = item.aprsIsPasscode?.trim() || aprsIsPasscode(call);
   if (!server || port < 1 || port > 65535 || !/^[A-Z0-9]{1,6}$/.test(call) || !/^-(?:[0-9]|1[0-5])$/.test(ssid) || !/^(?:-1|\d{1,5})$/.test(passcode) || filter === undefined || !validAprsIsFilter(filter)) return undefined;
   return { id: item.id, name: item.name, host: server[1], port, login: `${call}${ssid === '-0' ? '' : ssid}`, passcode, txBlocked: !!item.txBlocked, igateRfToIs: !!item.aprsIsIgateRfToIs, filter, reconnectTimeout: item.reconnectTimeout };
@@ -77,13 +79,13 @@ export class AprsIsRxService {
     this.onFrame = onFrame; this.onStatus = onStatus; this.version = version; this.createConnection = createConnection;
   }
 
-  configure(interfaces: AprsIsInterface[], station: Station | undefined): void {
+  configure(interfaces: AprsIsInterface[], station: Station | undefined, groups: string[] = DEFAULT_MESSAGE_GROUPS): void {
     const configured = interfaces.filter((item) => item.type === 'aprs-is');
     this.configuredIds = new Set(configured.map((item) => item.id));
     const next = new Map<string, Target>();
     for (const item of configured) {
       if (!item.enabled) continue;
-      const target = makeAprsIsTarget(item, station);
+      const target = makeAprsIsTarget(item, station, groups);
       if (target) next.set(item.id, target);
     }
     this.targets = next;
