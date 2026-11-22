@@ -116,7 +116,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
       symbolOverlay: string;
       beaconPath: string;
       beaconInterfaceId: string;
-    }): Promise<void> => ipcRenderer.invoke('station:send-beacon', station),
+    }): Promise<{ sent: string[]; failed: string[] }> => ipcRenderer.invoke('station:send-beacon', station),
     saveInterfaces: (
       interfaces: Array<{
         id: string;

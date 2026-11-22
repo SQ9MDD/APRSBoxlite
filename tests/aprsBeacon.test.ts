@@ -11,7 +11,7 @@ registerHooks({
     );
   },
 });
-const { encodeBeacon } = await import('../src/main/aprsBeacon.ts');
+const { encodeBeacon, selectBeaconInterfaces, transmitBeacon } = await import('../src/main/aprsBeacon.ts');
 
 const station = {
   callsign: 'SQ9MDD',
@@ -62,4 +62,38 @@ test('rejects invalid station data and transmission path', () => {
   assert.throws(() => encodeBeacon({ ...station, symbolOverlay: 'A' }));
   assert.throws(() => encodeBeacon({ ...station, beaconPath: 'WIDE1-1*' }));
   assert.throws(() => encodeBeacon({ ...station, comment: 'żółć' }));
+});
+
+test('automatically selects all available TX interfaces and respects explicit selection', () => {
+  const items = [
+    { id: 'radio', name: 'Radio', enabled: true, txBlocked: false },
+    { id: 'internet', name: 'APRS-IS', enabled: true, txBlocked: false },
+    { id: 'offline', name: 'Offline', enabled: true, txBlocked: false },
+    { id: 'blocked', name: 'Blocked', enabled: true, txBlocked: true },
+    { id: 'disabled', name: 'Disabled', enabled: false, txBlocked: false },
+  ];
+  const available = (item: { id: string }) => item.id !== 'offline';
+  assert.deepEqual(selectBeaconInterfaces(items, '', available).map((item) => item.id), ['radio', 'internet']);
+  assert.deepEqual(selectBeaconInterfaces(items, 'radio', available).map((item) => item.id), ['radio']);
+  assert.throws(() => selectBeaconInterfaces(items, 'offline', available), /not connected/);
+  assert.throws(() => selectBeaconInterfaces(items, 'blocked', available), /blocked/);
+  assert.throws(() => selectBeaconInterfaces(items, '', () => false), /No connected/);
+});
+
+test('attempts every selected interface even if one fails', async () => {
+  const items = [
+    { id: 'radio', name: 'Radio', enabled: true, txBlocked: false },
+    { id: 'internet', name: 'APRS-IS', enabled: true, txBlocked: false },
+  ];
+  const attempts: string[] = [];
+  const frame = new Uint8Array([1]);
+  const result = await transmitBeacon(items, frame, async (id, bytes) => {
+    attempts.push(id);
+    assert.equal(bytes, frame);
+    if (id === 'radio') throw new Error('Disconnected');
+  });
+  assert.deepEqual(attempts, ['radio', 'internet']);
+  assert.deepEqual(result.sent.map((item) => item.id), ['internet']);
+  assert.equal(result.failed[0].error, 'Disconnected');
+  await assert.rejects(transmitBeacon(items, frame, async () => { throw new Error('Offline'); }), /Offline/);
 });

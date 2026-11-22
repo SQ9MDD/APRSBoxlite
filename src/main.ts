@@ -6,7 +6,7 @@ import { mkdirSync } from 'node:fs';
 import { StationStore } from './main/stationStore';
 import { MessageService } from './main/aprsMessages';
 import { MessageStorage } from './main/messageStorage';
-import { encodeBeacon } from './main/aprsBeacon';
+import { encodeBeacon, selectBeaconInterfaces, transmitBeacon } from './main/aprsBeacon';
 import { classifyTraffic } from './main/trafficColors';
 import type { Station, AprsMessage } from './types';
 import { ConfigStorage, getApplicationDirectory, atomicWriteJson } from './main/configStorage';
@@ -492,25 +492,18 @@ app.whenReady().then(async () => {
       configStorage.getConfiguration().interfaces ?? [],
     );
     const statuses = kissStatuses();
-    const eligible = interfaces.filter(
-      (item) => item.enabled && !item.txBlocked,
+    const targets = selectBeaconInterfaces(interfaces, station.beaconInterfaceId, (item) =>
+      statuses[item.id] === 'connected' && (item.type !== 'aprs-is' || aprsIsRxService.canTransmit(item.id)),
     );
-    const connected = eligible.filter((item) => statuses[item.id] === 'connected');
-    const interfaceId = station.beaconInterfaceId ||
-      (connected.length === 1 ? connected[0].id : '');
-    if (!interfaceId) throw new Error('Choose a connected transmit interface.');
-    const selected = interfaces.find((item) => item.id === interfaceId);
-    if (!selected) throw new Error('The selected beacon interface no longer exists. Choose another interface in My Station.');
-    if (!selected.enabled) throw new Error(`Beacon interface "${selected.name || interfaceId}" is disabled. Choose an enabled interface in My Station.`);
-    if (selected.txBlocked) throw new Error(`TX is blocked on beacon interface "${selected.name || interfaceId}". Unblock TX in Interfaces or choose another interface in My Station.`);
-    if (statuses[interfaceId] !== 'connected') throw new Error(`Beacon interface "${selected.name || interfaceId}" is not connected.`);
     const frame = encodeBeacon(station);
-    await transmitKiss(interfaceId, frame);
+    const result = await transmitBeacon(targets, frame, transmitKiss);
     const packet = new KissFrameDecoder().consume(frame)[0];
     if (packet) {
-      const source = eligible.find((item) => item.id === interfaceId);
-      stationStore.receive(packet, source?.name || source?.hostPort || source?.serialDevice);
+      const source = result.sent[0];
+      stationStore.receive(packet, source.name || source.hostPort || source.serialDevice);
     }
+    if (result.failed.length) console.warn('Beacon not sent on some interfaces:', result.failed.map(({ interface: item, error }) => `${item.name || item.id}: ${error}`).join('; '));
+    return { sent: result.sent.map((item) => item.name || item.id), failed: result.failed.map(({ interface: item, error }) => `${item.name || item.id}: ${error}`) };
   };
   const scheduleBeacon = (retry = false) => {
     clearTimeout(beaconTimer);
@@ -669,8 +662,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('messages:get', () => messageService.snapshot());
   ipcMain.handle('station:send-beacon', async (_event, value: unknown) => {
     const station = validateStationConfiguration(value);
-    await sendBeacon(station);
+    const result = await sendBeacon(station);
     scheduleBeacon();
+    return result;
   });
   ipcMain.handle('messages:send', (_event, value: unknown) => {
     if (!value || typeof value !== 'object')

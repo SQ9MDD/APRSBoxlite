@@ -95,7 +95,7 @@ interface Window {
         symbolOverlay: string;
         beaconPath: string;
         beaconInterfaceId: string;
-      }): Promise<void>;
+      }): Promise<{ sent: string[]; failed: string[] }>;
       saveInterfaces(
         interfaces: Array<{
           id: string;

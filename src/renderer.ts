@@ -1258,11 +1258,11 @@ function renderApp(): void {
       appRoot.querySelectorAll<HTMLButtonElement>('[data-action="send-beacon"]')
         .forEach((control) => { control.disabled = true; });
       try {
-        await window.aprsbox.config.sendBeacon({ ...stationSettings });
+        const result = await window.aprsbox.config.sendBeacon({ ...stationSettings });
         alertMessage = {
-          title: 'Beacon sent',
-          message: 'Position frame sent to the selected KISS interface.',
-          tone: 'success',
+          title: result.failed.length ? 'Beacon partially sent' : 'Beacon sent',
+          message: `Sent: ${result.sent.join(', ')}.${result.failed.length ? ` Failed: ${result.failed.join('; ')}` : ''}`,
+          tone: result.failed.length ? 'error' : 'success',
         };
       } catch (error) {
         alertMessage = {
