@@ -8,6 +8,17 @@ declare module '*.svg' {
 
 interface Window {
   aprsbox: {
+    ble: {
+      begin(): void;
+      autoScan(): Promise<void>;
+      remember(id: string, deviceId: string, name: string): Promise<void>;
+      choose(id: string): void;
+      status(id: string, status: 'connecting' | 'connected' | 'disconnected' | 'error'): void;
+      receive(id: string, bytes: Uint8Array): void;
+      onWrite(callback: (request: { requestId: string; interfaceId: string; bytes: Uint8Array }) => void): () => void;
+      writeResult(requestId: string, error: string | null): void;
+      onDevices(callback: (devices: Array<{ id: string; name: string }>) => void): () => void;
+    };
     system: {
       onSuspend(callback: () => void): () => void;
       onResume(callback: () => void): () => void;
@@ -84,13 +95,16 @@ interface Window {
         interfaces: Array<{
           id: string;
           name: string;
-          type: 'kiss-tcp' | 'kiss-serial';
+          type: 'kiss-tcp' | 'kiss-serial' | 'kiss-ble';
           enabled: boolean;
           txBlocked: boolean;
           hostPort: string;
           serialDevice: string;
           baudRate: string;
           reconnectTimeout: string;
+          bleProfile?: 'rt-950-pro';
+          bleDeviceId?: string;
+          bleDeviceName?: string;
         }>,
       ): Promise<{ path: string; storage: 'portable' | 'userData' }>;
     };

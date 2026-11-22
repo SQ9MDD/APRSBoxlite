@@ -1,4 +1,5 @@
 import './index.css';
+import { scanBle, cancelBleScan, disconnectBle, reconcileBle, noteBleDevices, isBleScanning, isAnyBleScanning, hasBleLink, transmitBle } from './bleTransport';
 import { createAlertDialog } from './components/AlertDialog';
 import type { AlertMessage } from './components/AlertDialog';
 import { createConfirmDialog } from './components/ConfirmDialog';
@@ -62,6 +63,63 @@ let activeSettingsSection: SettingsSection = 'general';
 let selectedInterfaceId: string | undefined;
 let interfaces: InterfaceSettings[] = [];
 let interfaceDraft: InterfaceSettings = createInterfaceDraft();
+let bleDevices: Array<{ id: string; name: string }> = [];
+let bleScanInterfaceId: string | undefined;
+let bleSelectedDeviceId = '';
+let bleScanMessage = 'Start scanning to find devices.';
+let bleAutoTarget: string | undefined;
+let bleAutoRequest = false;
+const bleLastAttempt = new Map<string, number>();
+const blePendingSelection = new Map<string, { id: string; name: string }>();
+function chooseBleDevice(interfaceId: string, deviceId: string): void {
+  const device = bleDevices.find((entry) => entry.id === deviceId);
+  if (!device) return;
+  blePendingSelection.set(interfaceId, { id: device.id, name: device.name || '' });
+  window.aprsbox.ble.choose(deviceId);
+}
+window.aprsbox.ble.onWrite(({ requestId, interfaceId, bytes }) => {
+  void transmitBle(interfaceId, bytes).then(
+    () => window.aprsbox.ble.writeResult(requestId, null),
+    (error) => window.aprsbox.ble.writeResult(requestId, error instanceof Error ? error.message : String(error)),
+  );
+});
+window.aprsbox.ble.onDevices((devices) => {
+  bleDevices = devices; noteBleDevices(devices.length > 0); updateBleDevices();
+  const config = interfaces.find((item) => item.id === bleAutoTarget && item.enabled && item.type === 'kiss-ble');
+  if (config?.bleDeviceId && devices.some((item) => item.id === config.bleDeviceId)) {
+    const id = config.id; bleAutoTarget = undefined; chooseBleDevice(id, config.bleDeviceId);
+  }
+});
+window.addEventListener('aprsbox:ble-auto-scan', () => {
+  const config = interfaces.find((item) => item.id === bleAutoTarget && item.enabled && item.type === 'kiss-ble' && item.bleDeviceId);
+  if (!config || isAnyBleScanning() || hasBleLink(config.id)) { bleAutoTarget = undefined; return; }
+  try {
+    bleScanInterfaceId = config.id;
+    scanBle(config.id, config.reconnectTimeout, (message) => { bleScanMessage = message; updateBleDevices(); }, true);
+  } catch { bleAutoTarget = undefined; }
+});
+function reconnectRememberedBle(): void {
+  if (bleAutoRequest || isAnyBleScanning()) return;
+  const now = Date.now();
+  const config = interfaces.find((item) => item.type === 'kiss-ble' && item.enabled && item.bleDeviceId && !hasBleLink(item.id) && now - (bleLastAttempt.get(item.id) ?? 0) >= Math.max(5000, (Number(item.reconnectTimeout) || 5) * 1000));
+  if (!config) return;
+  bleLastAttempt.set(config.id, now);
+  bleAutoTarget = config.id; bleAutoRequest = true;
+  void window.aprsbox.ble.autoScan().catch(() => { bleAutoTarget = undefined; }).finally(() => { bleAutoRequest = false; });
+}
+setInterval(reconnectRememberedBle, 5000);
+function updateBleDevices(): void {
+  const select = appRoot.querySelector<HTMLSelectElement>('[data-ble-devices]');
+  if (!select) return;
+  if (document.activeElement !== select) {
+    const top = select.scrollTop;
+    select.replaceChildren(...bleDevices.map((device) => new Option(device.name?.includes(device.id) ? device.name : `${device.name || 'Unnamed Bluetooth device'} · ${device.id}`, device.id)));
+    select.value = bleSelectedDeviceId;
+    select.scrollTop = top;
+  }
+  const message = appRoot.querySelector<HTMLElement>('[data-ble-status]');
+  if (message) message.textContent = bleScanMessage;
+}
 let themeMode: ThemeMode = 'system';
 let beaconSending = false;
 let mapMaskOpacity = { light: 10, dark: 20 };
@@ -221,6 +279,7 @@ function applyStoredStationConfiguration(
 function applyStoredInterfaces(configuration: Record<string, unknown>): void {
   if (!Array.isArray(configuration.interfaces)) return;
   interfaces = configuration.interfaces.filter(isInterfaceSettings);
+  reconcileBle(interfaces);
 }
 
 function isInterfaceSettings(value: unknown): value is InterfaceSettings {
@@ -231,7 +290,7 @@ function isInterfaceSettings(value: unknown): value is InterfaceSettings {
   return (
     typeof item.id === 'string' &&
     typeof item.name === 'string' &&
-    (item.type === 'kiss-tcp' || item.type === 'kiss-serial') &&
+    (item.type === 'kiss-tcp' || item.type === 'kiss-serial' || item.type === 'kiss-ble') &&
     typeof item.enabled === 'boolean' &&
     typeof item.txBlocked === 'boolean' &&
     typeof item.hostPort === 'string' &&
@@ -380,8 +439,20 @@ function refreshTrafficMonitor(): void {
 
 window.aprsbox.traffic.onInterfaceStatus(({ interfaceId, status }) => {
   interfaceStatuses = { ...interfaceStatuses, [interfaceId]: status };
+  const selected = blePendingSelection.get(interfaceId);
+  if (status === 'connected' && selected) {
+    blePendingSelection.delete(interfaceId);
+    const item = interfaces.find((entry) => entry.id === interfaceId);
+    if (item && (item.bleDeviceId !== selected.id || item.bleDeviceName !== selected.name)) {
+      void window.aprsbox.ble.remember(interfaceId, selected.id, selected.name).then(() => {
+        interfaces = interfaces.map((entry) => entry.id === interfaceId ? { ...entry, bleDeviceId: selected.id, bleDeviceName: selected.name } : entry);
+        if (interfaceDraft.id === interfaceId) interfaceDraft = { ...interfaceDraft, bleDeviceId: selected.id, bleDeviceName: selected.name };
+        if (activeView === 'settings' && activeSettingsSection === 'interfaces') renderApp();
+      }).catch(console.error);
+    }
+  }
   updateTopbarInterfaceStatuses();
-  if (activeView === 'settings' && activeSettingsSection !== 'general') renderApp();
+  if (activeView === 'settings' && activeSettingsSection !== 'general' && !(bleScanInterfaceId && isBleScanning(bleScanInterfaceId))) renderApp();
   if (activeView === 'messages') {
     const option = [
       ...appRoot.querySelectorAll<HTMLOptionElement>(
@@ -930,6 +1001,37 @@ function renderApp(): void {
   const resolvedTheme =
     document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
   appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView)}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, activeSettingsSection, `${stationSettings.callsign}${stationSettings.ssid}`, mapMaskOpacity[resolvedTheme], detailCallsign ? '' : renderStationFilters(liveStations, stationsViewState.filter), interfaces, interfaceStatuses, activeView === 'traffic' ? renderTrafficFilter(trafficFrames, trafficFilter) : '', activeView === 'stations' && !detailCallsign ? renderStationSearch(liveStations, stationsViewState) : '')}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}`;
+  updateBleDevices();
+  appRoot.querySelector<HTMLButtonElement>('[data-action="ble-scan"]')?.addEventListener('click', () => {
+    if (!interfaceDraft.id) interfaceDraft.id = crypto.randomUUID();
+    const interfaceId = interfaceDraft.id;
+    if (bleAutoTarget === interfaceId && isBleScanning(interfaceId)) { bleAutoTarget = undefined; bleScanMessage = 'Scanning for Bluetooth devices…'; updateBleDevices(); return; }
+    bleDevices = []; bleSelectedDeviceId = ''; updateBleDevices();
+    try {
+      scanBle(interfaceId, interfaceDraft.reconnectTimeout, (message) => { bleScanMessage = message; updateBleDevices(); });
+      bleScanInterfaceId = interfaceId;
+    }
+    catch (error) { alertMessage = { title: 'Bluetooth unavailable', message: String(error), tone: 'error' }; renderApp(); }
+  });
+  const bleDeviceList = appRoot.querySelector<HTMLSelectElement>('[data-ble-devices]');
+  bleDeviceList?.addEventListener('change', () => { bleSelectedDeviceId = bleDeviceList.value; });
+  bleDeviceList?.addEventListener('blur', updateBleDevices);
+  appRoot.querySelector<HTMLButtonElement>('[data-action="ble-select"]')?.addEventListener('click', () => {
+    const id = bleSelectedDeviceId;
+    if (!id) return;
+    if (!bleDevices.some((device) => device.id === id) || !bleScanInterfaceId || !isBleScanning(bleScanInterfaceId)) {
+      bleScanMessage = 'Device is no longer available. Scan again.'; updateBleDevices(); return;
+    }
+    const saved = interfaces.find((item) => item.id === bleScanInterfaceId);
+    if (!saved?.enabled || saved.type !== 'kiss-ble' || interfaceDraft.id !== saved.id) {
+      bleScanMessage = 'Save and enable this Bluetooth interface before connecting.';
+      updateBleDevices();
+      return;
+    }
+    chooseBleDevice(saved.id, id); bleDevices = [];
+  });
+  appRoot.querySelector<HTMLButtonElement>('[data-action="ble-cancel"]')?.addEventListener('click', () => { bleAutoTarget = undefined; cancelBleScan(); bleDevices = []; bleSelectedDeviceId = ''; updateBleDevices(); });
+  appRoot.querySelector<HTMLButtonElement>('[data-action="ble-disconnect"]')?.addEventListener('click', () => { if (selectedInterfaceId) disconnectBle(selectedInterfaceId); });
   if (existingMap) {
     appRoot.querySelector('.view-region')?.replaceWith(existingMap);
     window.dispatchEvent(new Event('aprs-map:visible'));
@@ -1104,8 +1206,13 @@ function renderApp(): void {
         try {
           await window.aprsbox.config.saveInterfaces(nextInterfaces);
           interfaces = nextInterfaces;
+          reconcileBle(interfaces);
           selectedInterfaceId = savedInterface.id;
           interfaceDraft = { ...savedInterface };
+          if (savedInterface.type === 'kiss-ble' && savedInterface.enabled && savedInterface.id === bleScanInterfaceId && isBleScanning(savedInterface.id) && bleDevices.some((device) => device.id === bleSelectedDeviceId)) {
+            chooseBleDevice(savedInterface.id, bleSelectedDeviceId);
+            bleDevices = [];
+          }
           alertMessage = {
             title: 'Interface saved',
             message:
@@ -1134,6 +1241,7 @@ function renderApp(): void {
         try {
           await window.aprsbox.config.saveInterfaces(nextInterfaces);
           interfaces = nextInterfaces;
+          reconcileBle(interfaces);
           const selected = interfaces.find(
             (item) => item.id === selectedInterfaceId,
           );
@@ -1191,6 +1299,7 @@ function renderApp(): void {
         try {
           await window.aprsbox.config.saveInterfaces(nextInterfaces);
           interfaces = nextInterfaces;
+          reconcileBle(interfaces);
           if (selectedInterfaceId === deletedId) {
             selectedInterfaceId = undefined;
             interfaceDraft = createInterfaceDraft();

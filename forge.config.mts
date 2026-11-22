@@ -19,6 +19,8 @@ const config: ForgeConfig = {
     appBundleId: 'com.electron.aprsbox-lite',
     win32metadata: { ProductName: 'APRSBOX', FileDescription: 'APRSBOX' },
     extendInfo: {
+      NSBluetoothAlwaysUsageDescription: 'APRSBox Lite uses Bluetooth to receive KISS packets from your radio.',
+      NSBluetoothPeripheralUsageDescription: 'APRSBox Lite uses Bluetooth to receive KISS packets from your radio.',
       NSLocationUsageDescription:
         'APRSBox Lite uses your location to set your station position.',
       NSLocationWhenInUseUsageDescription:

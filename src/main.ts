@@ -14,6 +14,7 @@ import { MapTileCache } from './main/mapTileCache';
 import { createConfigurationBackup, readConfigurationBackup } from './main/configBackup';
 import { filterTrafficFrames, formatTrafficLog, trafficLogFilename } from './trafficLog';
 import { KissSerialRxService } from './main/kissSerialRx';
+import { KissBleRxService } from './main/kissBleRx';
 import {
   KissTcpRxService,
   KissFrameDecoder,
@@ -39,13 +40,16 @@ interface StationConfiguration {
 interface InterfaceConfiguration {
   id: string;
   name: string;
-  type: 'kiss-tcp' | 'kiss-serial';
+  type: 'kiss-tcp' | 'kiss-serial' | 'kiss-ble';
   enabled: boolean;
   txBlocked: boolean;
   hostPort: string;
   serialDevice: string;
   baudRate: string;
   reconnectTimeout: string;
+  bleProfile?: 'rt-950-pro';
+  bleDeviceId?: string;
+  bleDeviceName?: string;
 }
 
 const existingUserDataDirectory = app.getPath('userData');
@@ -76,6 +80,26 @@ const createWindow = () => {
       nodeIntegration: false,
     },
   });
+  let chooseBluetooth: ((id: string) => void) | undefined;
+  let availableBluetooth = new Set<string>();
+  let cancelBluetooth = false;
+  mainWindow.webContents.on('select-bluetooth-device', (event, devices, callback) => {
+    event.preventDefault();
+    if (cancelBluetooth) { cancelBluetooth = false; callback(''); return; }
+    chooseBluetooth = callback;
+    availableBluetooth = new Set(devices.map((device) => device.deviceId));
+    mainWindow.webContents.send('ble:devices', devices.map(({ deviceId, deviceName }) => ({ id: deviceId, name: deviceName })));
+  });
+  const selectDevice = (event: Electron.IpcMainEvent, id: unknown) => {
+    if (event.sender !== mainWindow.webContents || typeof id !== 'string' || (id && !availableBluetooth.has(id))) return;
+    const callback = chooseBluetooth; chooseBluetooth = undefined; availableBluetooth.clear();
+    if (!callback && !id) cancelBluetooth = true;
+    callback?.(id);
+  };
+  const beginBluetooth = (event: Electron.IpcMainEvent) => { if (event.sender === mainWindow.webContents) cancelBluetooth = false; };
+  ipcMain.on('ble:begin', beginBluetooth);
+  ipcMain.on('ble:choose', selectDevice);
+  mainWindow.on('closed', () => { chooseBluetooth?.(''); ipcMain.removeListener('ble:begin', beginBluetooth); ipcMain.removeListener('ble:choose', selectDevice); });
 
   // and load the index.html of the app.
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
@@ -205,7 +229,7 @@ function validateInterfaces(value: unknown): InterfaceConfiguration[] {
       return field.trim().slice(0, maximum);
     };
     const type = text('type', 16);
-    if (type !== 'kiss-tcp' && type !== 'kiss-serial') {
+    if (type !== 'kiss-tcp' && type !== 'kiss-serial' && type !== 'kiss-ble') {
       throw new Error('Unsupported interface type.');
     }
     if (
@@ -224,6 +248,9 @@ function validateInterfaces(value: unknown): InterfaceConfiguration[] {
       serialDevice: text('serialDevice', 255),
       baudRate: text('baudRate', 16),
       reconnectTimeout: text('reconnectTimeout', 16),
+      ...(type === 'kiss-ble' ? { bleProfile: 'rt-950-pro' as const } : {}),
+      ...(type === 'kiss-ble' && typeof source.bleDeviceId === 'string' ? { bleDeviceId: text('bleDeviceId', 255) } : {}),
+      ...(type === 'kiss-ble' && typeof source.bleDeviceName === 'string' ? { bleDeviceName: text('bleDeviceName', 255) } : {}),
     };
   });
 }
@@ -302,16 +329,43 @@ app.whenReady().then(async () => {
     broadcast('traffic:interface-status', { interfaceId, status });
   kissTcpRxService = new KissTcpRxService(onKissFrame, onKissStatus);
   kissSerialRxService = new KissSerialRxService(onKissFrame, onKissStatus);
+  const bleWrites = new Map<string, { sender: Electron.WebContents; resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  ipcMain.on('ble:write-result', (event, requestId: unknown, error: unknown) => {
+    if (typeof requestId !== 'string') return;
+    const pending = bleWrites.get(requestId);
+    if (!pending || event.sender !== pending.sender || (error !== null && typeof error !== 'string')) return;
+    clearTimeout(pending.timer); bleWrites.delete(requestId);
+    if (typeof error === 'string') pending.reject(new Error(error)); else pending.resolve();
+  });
+  const kissBleRxService = new KissBleRxService(onKissFrame, onKissStatus, (interfaceId, bytes) => new Promise<void>((resolve, reject) => {
+    const window = BrowserWindow.getAllWindows().find((item) => !item.isDestroyed());
+    if (!window) { reject(new Error('Bluetooth connection is unavailable.')); return; }
+    const requestId = crypto.randomUUID();
+    const timer = setTimeout(() => { bleWrites.delete(requestId); reject(new Error('Bluetooth write timed out.')); }, 60000);
+    bleWrites.set(requestId, { sender: window.webContents, resolve, reject, timer });
+    window.webContents.send('ble:write', { requestId, interfaceId, bytes });
+  }));
   const configureKiss = (interfaces: InterfaceConfiguration[]) => {
-    kissTcpRxService.configure(interfaces);
-    kissSerialRxService.configure(interfaces);
+    const wired = interfaces.filter((item): item is InterfaceConfiguration & { type: 'kiss-tcp' | 'kiss-serial' } => item.type !== 'kiss-ble');
+    kissTcpRxService.configure(wired);
+    kissSerialRxService.configure(wired);
+    kissBleRxService.configure(interfaces);
   };
+  ipcMain.on('ble:status', (event, id: unknown, status: unknown) => {
+    if (!BrowserWindow.fromWebContents(event.sender) || typeof id !== 'string' || !['connecting', 'connected', 'disconnected', 'error'].includes(String(status))) return;
+    kissBleRxService.status(id, status as ConnectionStatus);
+  });
+  ipcMain.on('ble:receive', (event, id: unknown, bytes: unknown) => {
+    if (BrowserWindow.fromWebContents(event.sender) && typeof id === 'string' && bytes instanceof Uint8Array) kissBleRxService.receive(id, bytes);
+  });
   const transmitKiss = (interfaceId: string, frame: Uint8Array) =>
-    kissSerialRxService.isConfigured(interfaceId)
+    kissBleRxService.isConfigured(interfaceId)
+      ? kissBleRxService.transmit(interfaceId, frame)
+      : kissSerialRxService.isConfigured(interfaceId)
       ? kissSerialRxService.transmit(interfaceId, frame)
       : kissTcpRxService.transmit(interfaceId, frame);
-  const kissStatuses = () => ({ ...kissTcpRxService.getStatuses(), ...kissSerialRxService.getStatuses() });
-  const kissHistory = () => [...kissTcpRxService.getHistory(), ...kissSerialRxService.getHistory()]
+  const kissStatuses = () => ({ ...kissTcpRxService.getStatuses(), ...kissSerialRxService.getStatuses(), ...kissBleRxService.getStatuses() });
+  const kissHistory = () => [...kissTcpRxService.getHistory(), ...kissSerialRxService.getHistory(), ...kissBleRxService.getHistory()]
     .sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt)).slice(0, 1000);
   const notifyPower = (event: 'system:suspend' | 'system:resume') => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -366,6 +420,23 @@ app.whenReady().then(async () => {
     );
     return write;
   };
+  ipcMain.handle('ble:auto-scan', (event) => {
+    if (!BrowserWindow.fromWebContents(event.sender)) throw new Error('Invalid window.');
+    return event.sender.executeJavaScript('window.dispatchEvent(new Event("aprsbox:ble-auto-scan"))', true);
+  });
+  ipcMain.handle('ble:remember', (event, id: unknown, deviceId: unknown, deviceName: unknown) => {
+    if (!BrowserWindow.fromWebContents(event.sender) || typeof id !== 'string' || typeof deviceId !== 'string' || !deviceId || deviceId.length > 255 || typeof deviceName !== 'string' || deviceName.length > 255) throw new Error('Invalid Bluetooth device.');
+    const write = configWrites.then(async () => {
+      const items = validateInterfaces(configStorage.getConfiguration().interfaces ?? []);
+      const item = items.find((entry) => entry.id === id && entry.type === 'kiss-ble' && entry.enabled);
+      if (!item || kissBleRxService.getStatuses()[id] !== 'connected') throw new Error('Bluetooth interface is not connected.');
+      item.bleDeviceId = deviceId; item.bleDeviceName = deviceName;
+      await configStorage.save({ ...configStorage.getConfiguration(), interfaces: items });
+      configureKiss(items);
+    });
+    configWrites = write.then(() => undefined, () => undefined);
+    return write;
+  });
   const sendBeacon = async (station: StationConfiguration) => {
     const interfaces = validateInterfaces(
       configStorage.getConfiguration().interfaces ?? [],
@@ -378,6 +449,11 @@ app.whenReady().then(async () => {
     const interfaceId = station.beaconInterfaceId ||
       (connected.length === 1 ? connected[0].id : '');
     if (!interfaceId) throw new Error('Choose a connected transmit interface.');
+    const selected = interfaces.find((item) => item.id === interfaceId);
+    if (!selected) throw new Error('The selected beacon interface no longer exists. Choose another interface in My Station.');
+    if (!selected.enabled) throw new Error(`Beacon interface "${selected.name || interfaceId}" is disabled. Choose an enabled interface in My Station.`);
+    if (selected.txBlocked) throw new Error(`TX is blocked on beacon interface "${selected.name || interfaceId}". Unblock TX in Interfaces or choose another interface in My Station.`);
+    if (statuses[interfaceId] !== 'connected') throw new Error(`Beacon interface "${selected.name || interfaceId}" is not connected.`);
     const frame = encodeBeacon(station);
     await transmitKiss(interfaceId, frame);
     const packet = new KissFrameDecoder().consume(frame)[0];

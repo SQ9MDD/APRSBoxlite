@@ -2,6 +2,25 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { Station, AprsMessage } from './types';
 
 contextBridge.exposeInMainWorld('aprsbox', {
+  ble: {
+    begin: () => ipcRenderer.send('ble:begin'),
+    autoScan: (): Promise<void> => ipcRenderer.invoke('ble:auto-scan'),
+    remember: (id: string, deviceId: string, name: string): Promise<void> => ipcRenderer.invoke('ble:remember', id, deviceId, name),
+    choose: (id: string) => ipcRenderer.send('ble:choose', id),
+    status: (id: string, status: string) => ipcRenderer.send('ble:status', id, status),
+    receive: (id: string, bytes: Uint8Array) => ipcRenderer.send('ble:receive', id, bytes),
+    onWrite: (callback: (request: { requestId: string; interfaceId: string; bytes: Uint8Array }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, request: { requestId: string; interfaceId: string; bytes: Uint8Array }) => callback(request);
+      ipcRenderer.on('ble:write', listener);
+      return () => ipcRenderer.removeListener('ble:write', listener);
+    },
+    writeResult: (requestId: string, error: string | null) => ipcRenderer.send('ble:write-result', requestId, error),
+    onDevices: (callback: (devices: Array<{ id: string; name: string }>) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, devices: Array<{ id: string; name: string }>) => callback(devices);
+      ipcRenderer.on('ble:devices', listener);
+      return () => ipcRenderer.removeListener('ble:devices', listener);
+    },
+  },
   system: {
     onSuspend: (callback: () => void): (() => void) => {
       const listener = () => callback();
@@ -97,13 +116,16 @@ contextBridge.exposeInMainWorld('aprsbox', {
       interfaces: Array<{
         id: string;
         name: string;
-        type: 'kiss-tcp' | 'kiss-serial';
+        type: 'kiss-tcp' | 'kiss-serial' | 'kiss-ble';
         enabled: boolean;
         txBlocked: boolean;
         hostPort: string;
         serialDevice: string;
         baudRate: string;
         reconnectTimeout: string;
+        bleProfile?: 'rt-950-pro';
+        bleDeviceId?: string;
+        bleDeviceName?: string;
       }>,
     ): Promise<{ path: string; storage: 'portable' | 'userData' }> =>
       ipcRenderer.invoke('config:save-interfaces', interfaces),

@@ -2866,3 +2866,36 @@ button {
 :root[data-theme='light'] .general-source-table table { color: #334e67; }
 :root[data-theme='light'] .general-source-table th, :root[data-theme='light'] .general-source-table td { border-color: #cfdae5; }
 @media (max-width: 1250px) { .general-map-sources { grid-template-columns: 1fr; } }
+
+.ble-panel {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.ble-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ble-status {
+  margin: 0;
+  color: #9cb2c8;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.form-grid .ble-panel select[data-ble-devices] {
+  height: 144px;
+  padding: 4px;
+  overflow: auto;
+}
+
+.ble-panel select[data-ble-devices] option {
+  padding: 5px 6px;
+}
+
+:root[data-theme='light'] .ble-status {
+  color: #536a80;
+}
