@@ -1,6 +1,8 @@
 # APRSBox Lite
 
-Lekki klient APRS dla systemów Windows, macOS i Linux. Pozwala śledzić stacje na mapie, przeglądać ruch i prowadzić rozmowy przez radio lub APRS-IS.
+APRSBox Lite to lekki klient APRS inspirowany projektem [APRSBox](https://github.com/SQ9MDD/APRSBox), przeznaczony do szybkiego, doraźnego uruchomienia na komputerze. Pozwala śledzić stacje na mapie, przeglądać ruch i prowadzić rozmowy przez radio lub APRS-IS.
+
+Wersja Lite skupia się na podstawowych funkcjach klienta i nie zawiera rozbudowanych możliwości DIGI i iGate dostępnych w pełnym APRSBox. Jest za to dostępna jako instalator lub gotowa paczka dla Windows, macOS i Linux, dzięki czemu można ją szybko uruchomić na różnych platformach.
 
 **[Pobierz najnowszą wersję](https://github.com/SQ9MDD/APRSBoxlite/releases)**
 
@@ -36,5 +38,3 @@ npm run typecheck
 npm run test:config
 npm run package
 ```
-
-Autorem projektu jest **Rysiek Labus, SQ9MDD**.
