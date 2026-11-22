@@ -16,7 +16,13 @@ export class KissBleRxService {
   }
   configure(interfaces: Interface[]): void {
     this.configs = new Map(interfaces.filter((item) => item.type === 'kiss-ble').map((item) => [item.id, item]));
-    for (const id of this.statuses.keys()) if (!this.configs.get(id)?.enabled) { this.statuses.delete(id); this.decoders.delete(id); }
+    for (const [id, status] of this.statuses) {
+      if (!this.configs.get(id)?.enabled) {
+        if (status !== 'disconnected') this.onStatus(id, 'disconnected');
+        this.statuses.delete(id);
+        this.decoders.delete(id);
+      }
+    }
     for (const config of this.configs.values()) if (!this.statuses.has(config.id)) this.statuses.set(config.id, 'disconnected');
   }
   status(id: string, status: ConnectionStatus): void {

@@ -25,7 +25,7 @@ export interface TrafficFrame {
   interfaceId: string;
   interfaceName: string;
   packet: string;
-  source: 'kiss';
+  source: 'kiss' | 'aprs-is';
   direction: 'rx' | 'tx';
   category?: TrafficCategory;
 }

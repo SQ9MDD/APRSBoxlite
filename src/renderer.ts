@@ -1,3 +1,4 @@
+import { defaultAprsIsFilter } from './aprsIsFilter';
 import './index.css';
 import { scanBle, cancelBleScan, disconnectBle, reconcileBle, noteBleDevices, isBleScanning, isAnyBleScanning, hasBleLink, transmitBle } from './bleTransport';
 import { createAlertDialog } from './components/AlertDialog';
@@ -21,7 +22,7 @@ import { renderPacketRows } from './components/PacketScroller';
 import { renderMapView } from './views/MapView';
 import type { MapViewport } from './views/MapView';
 import type { RulerState } from './views/MapRuler';
-import { renderMessageHistory, renderMessagesView } from './views/MessagesView';
+import { isVisibleInConversation, renderMessageHistory, renderMessagesView } from './views/MessagesView';
 import {
   renderSettingsView,
   type PhgValues,
@@ -129,8 +130,8 @@ let themeMode: ThemeMode = 'system';
 let beaconSending = false;
 let mapMaskOpacity = { light: 10, dark: 20 };
 let stationSettings: StationSettings = {
-  callsign: 'SQ9MDD',
-  ssid: '-8',
+  callsign: 'N0LIC',
+  ssid: '-0',
   location: '50.0619, 19.9383',
   comment: 'APRSBox Lite station',
   status: 'Monitoring APRS traffic',
@@ -145,6 +146,7 @@ let stationSettings: StationSettings = {
 let alertMessage: AlertMessage | undefined;
 let confirmation: Confirmation | undefined;
 let pendingInterfaceDeletion: InterfaceSettings | undefined;
+let pendingConversationDeletion: string | undefined;
 let phgCalculatorOpen = false;
 let locationAccuracy: string | undefined;
 let locationPickerOpen = false;
@@ -190,6 +192,8 @@ function createInterfaceDraft(): InterfaceSettings {
     serialDevice: '',
     baudRate: '9600',
     reconnectTimeout: '150',
+    aprsIsServer: 'rotate.aprs2.net:14580',
+    aprsIsRadius: '25',
   };
 }
 
@@ -295,7 +299,7 @@ function isInterfaceSettings(value: unknown): value is InterfaceSettings {
   return (
     typeof item.id === 'string' &&
     typeof item.name === 'string' &&
-    (item.type === 'kiss-tcp' || item.type === 'kiss-serial' || item.type === 'kiss-ble') &&
+    (item.type === 'kiss-tcp' || item.type === 'kiss-serial' || item.type === 'kiss-ble' || item.type === 'aprs-is') &&
     typeof item.enabled === 'boolean' &&
     typeof item.txBlocked === 'boolean' &&
     typeof item.hostPort === 'string' &&
@@ -784,6 +788,18 @@ appRoot.addEventListener('click', (event) => {
     if (select) void saveMapSettings({ ...mapSettings, coverageFillOpacity: Number(select.value) });
     return;
   }
+  const updateTocalls = event.target.closest<HTMLButtonElement>('[data-action="update-tocalls"]');
+  if (updateTocalls) {
+    updateTocalls.disabled = true;
+    void window.aprsbox.config.updateTocalls().then((result) => {
+      alertMessage = { title: 'TOCALL list updated', message: `${result.count} entries loaded${result.generationTime ? ` · ${result.generationTime}` : ''}. The list is saved for future sessions.`, tone: 'success' };
+      renderApp();
+    }).catch((error) => {
+      alertMessage = { title: 'TOCALL update failed', message: error instanceof Error ? error.message : String(error), tone: 'error' };
+      renderApp();
+    });
+    return;
+  }
   const backup = event.target.closest<HTMLButtonElement>('[data-action="export-config"], [data-action="import-config"]');
   if (backup) {
     backup.disabled = true;
@@ -832,6 +848,13 @@ appRoot.addEventListener('click', (event) => {
     renderApp();
     return;
   }
+  const deleteConversation = event.target.closest<HTMLButtonElement>('[data-delete-conversation]');
+  if (deleteConversation?.dataset.deleteConversation) {
+    pendingConversationDeletion = deleteConversation.dataset.deleteConversation;
+    confirmation = { kind: 'conversation', title: 'Delete conversation?', message: `Delete all messages with “${pendingConversationDeletion}”?` };
+    renderApp();
+    return;
+  }
   const conversation = event.target.closest<HTMLButtonElement>(
     '[data-message-conversation]',
   );
@@ -858,7 +881,7 @@ appRoot.addEventListener('click', (event) => {
     return;
   }
   if (event.target.closest('[data-action="station-message"]') && detailCallsign) {
-    messageRecipient = detailCallsign;
+    messageRecipient = liveStations.find((station) => station.callsign === detailCallsign)?.owner || detailCallsign;
     activeView = 'messages';
     renderApp();
     return;
@@ -871,7 +894,16 @@ appRoot.addEventListener('click', (event) => {
       renderApp();
       return;
     }
-    selectedCallsign = stationButton.dataset.station;
+    if (activeView === 'map' && stationButton.matches('.packet-scroller-row')) {
+      selectedCallsign = undefined;
+      const station = liveStations.find((item) => item.callsign === stationButton.dataset.station);
+      if (station && Number.isFinite(station.latitude) && Number.isFinite(station.longitude)) {
+        const panelLeft = stationButton.closest<HTMLElement>('.right-panel')?.getBoundingClientRect().left;
+        window.dispatchEvent(new CustomEvent('aprs-map:center-station', { detail: { latitude: station.latitude, longitude: station.longitude, panelLeft } }));
+      }
+    } else {
+      selectedCallsign = stationButton.dataset.station;
+    }
     refreshMapDrawer();
   }
   if (event.target.closest('.right-panel [data-action="close-scroller"]')) {
@@ -972,15 +1004,35 @@ appRoot.addEventListener('submit', (event) => {
     });
 });
 
+const markingRead = new Set<string>();
+function syncMessageUnread(): void {
+  const unread = messages.some((message) => message.unread);
+  const button = appRoot.querySelector<HTMLButtonElement>('[data-view="messages"]');
+  button?.classList.toggle('has-unread', unread);
+  button?.setAttribute('aria-label', unread ? 'Messages, unread messages' : 'Messages');
+  const icon = button?.querySelector<HTMLImageElement>('.nav-icon');
+  if (icon) icon.src = (unread ? icon.dataset.alertIcon : icon.dataset.normalIcon) || icon.src;
+  const recipient = activeView === 'messages' ? messageRecipient : undefined;
+  if (!recipient || markingRead.has(recipient) || !messages.some((message) => message.unread && isVisibleInConversation(message, recipient))) return;
+  markingRead.add(recipient);
+  void window.aprsbox.messages.markRead(recipient).then(() => {
+    markingRead.delete(recipient);
+    syncMessageUnread();
+  }).catch((error) => { markingRead.delete(recipient); console.error(error); });
+}
+
 function updateMessages(next: AprsMessage[]): void {
+  const oldIds = new Set(messages.map((message) => message.id));
+  const hasNewMessage = !!messageRecipient && next.some((message) => !oldIds.has(message.id) && isVisibleInConversation(message, messageRecipient!));
   messages = next;
+  syncMessageUnread();
   if (activeView !== 'messages') return;
   const history = appRoot.querySelector<HTMLElement>('[data-message-history]');
   if (history && messageRecipient) {
     const atBottom =
       history.scrollHeight - history.scrollTop - history.clientHeight < 32;
     history.innerHTML = renderMessageHistory(messages, messageRecipient);
-    if (atBottom) history.scrollTop = history.scrollHeight;
+    if (atBottom || hasNewMessage) history.scrollTop = history.scrollHeight;
   }
   const list = appRoot.querySelector<HTMLElement>('.messages-conversations');
   if (list) {
@@ -1015,7 +1067,7 @@ function renderApp(): void {
   mountedLocationPicker = undefined;
   const resolvedTheme =
     document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
-  appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView)}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, activeSettingsSection, `${stationSettings.callsign}${stationSettings.ssid}`, mapMaskOpacity[resolvedTheme], detailCallsign ? '' : renderStationFilters(liveStations, stationsViewState.filter), interfaces, interfaceStatuses, activeView === 'traffic' ? renderTrafficFilter(trafficFrames, trafficFilter) : '', activeView === 'stations' && !detailCallsign ? renderStationSearch(liveStations, stationsViewState) : '')}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}`;
+  appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView, messages.some((message) => message.unread))}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, activeSettingsSection, `${stationSettings.callsign}${stationSettings.ssid}`, mapMaskOpacity[resolvedTheme], detailCallsign ? '' : renderStationFilters(liveStations, stationsViewState.filter), interfaces, interfaceStatuses, activeView === 'traffic' ? renderTrafficFilter(trafficFrames, trafficFilter) : '', activeView === 'stations' && !detailCallsign ? renderStationSearch(liveStations, stationsViewState) : '')}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}`;
   updateBleDevices();
   const pathInput = appRoot.querySelector<HTMLInputElement>('[data-message-send] input[name="path"]');
   const pathRecipient = messageRecipient;
@@ -1238,7 +1290,8 @@ function renderApp(): void {
         const savedInterface: InterfaceSettings = {
           ...interfaceDraft,
           id: interfaceDraft.id || crypto.randomUUID(),
-          name: interfaceDraft.name.trim() || 'KISS interface',
+          name: interfaceDraft.name.trim() || (interfaceDraft.type === 'aprs-is' ? 'APRS-IS' : 'KISS interface'),
+          ...(interfaceDraft.type === 'aprs-is' && interfaceDraft.aprsIsFilter === undefined ? { aprsIsFilter: defaultAprsIsFilter(stationSettings.location, interfaceDraft.aprsIsRadius || '25') } : {}),
         };
         const nextInterfaces = selectedInterfaceId
           ? interfaces.map((item) =>
@@ -1261,11 +1314,10 @@ function renderApp(): void {
               'Interface configuration was saved to the active configuration file.',
             tone: 'success',
           };
-        } catch {
+        } catch (error) {
           alertMessage = {
             title: 'Save failed',
-            message:
-              'Interface configuration could not be written to the configuration file.',
+            message: error instanceof Error ? error.message : String(error),
             tone: 'error',
           };
         }
@@ -1359,6 +1411,20 @@ function renderApp(): void {
         renderApp();
       }),
     );
+  appRoot.querySelector<HTMLButtonElement>('[data-action="cancel-delete-conversation"]')?.addEventListener('click', () => {
+    confirmation = undefined; pendingConversationDeletion = undefined; renderApp();
+  });
+  appRoot.querySelector<HTMLButtonElement>('[data-action="confirm-delete-conversation"]')?.addEventListener('click', async () => {
+    const recipient = pendingConversationDeletion;
+    if (!recipient) return;
+    try {
+      await window.aprsbox.messages.deleteConversation(recipient);
+      if (messageRecipient === recipient) messageRecipient = undefined;
+    } catch {
+      alertMessage = { title: 'Delete failed', message: 'The conversation could not be deleted.', tone: 'error' };
+    }
+    confirmation = undefined; pendingConversationDeletion = undefined; renderApp();
+  });
   appRoot
     .querySelectorAll<HTMLInputElement | HTMLSelectElement>(
       '[data-station-field]',
@@ -1564,6 +1630,7 @@ function renderApp(): void {
       viewRoot && page.mount ? page.mount(viewRoot) : undefined;
   }
   mountedView = activeView;
+  syncMessageUnread();
 }
 
 applyTheme();

@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld('aprsbox', {
   },
   messages: {
     get: (): Promise<AprsMessage[]> => ipcRenderer.invoke('messages:get'),
+    markRead: (recipient: string): Promise<void> => ipcRenderer.invoke('messages:mark-read', recipient),
+    deleteConversation: (recipient: string): Promise<void> => ipcRenderer.invoke('messages:delete-conversation', recipient),
     send: (message: {
       recipient: string;
       text: string;
@@ -69,6 +71,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
     saveMapSettings: (settings: import('./mapSettings').MapSettings) => ipcRenderer.invoke('config:save-map-settings', settings),
     saveMessageInterface: (id: string) => ipcRenderer.invoke('config:save-message-interface', id),
     saveMessagePath: (recipient: string, path: string) => ipcRenderer.invoke('config:save-message-path', recipient, path),
+    updateTocalls: (): Promise<{ count: number; generationTime?: string }> => ipcRenderer.invoke('tocall:update'),
     exportBackup: (): Promise<boolean> => ipcRenderer.invoke('config:export-backup'),
     importBackup: (): Promise<boolean> => ipcRenderer.invoke('config:import-backup'),
     saveScrollerVisibility: (visible: boolean) => ipcRenderer.invoke('config:save-scroller-visibility', visible),
@@ -118,7 +121,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
       interfaces: Array<{
         id: string;
         name: string;
-        type: 'kiss-tcp' | 'kiss-serial' | 'kiss-ble';
+        type: 'kiss-tcp' | 'kiss-serial' | 'kiss-ble' | 'aprs-is';
         enabled: boolean;
         txBlocked: boolean;
         hostPort: string;
@@ -128,6 +131,11 @@ contextBridge.exposeInMainWorld('aprsbox', {
         bleProfile?: 'rt-950-pro';
         bleDeviceId?: string;
         bleDeviceName?: string;
+        aprsIsServer?: string;
+        aprsIsRadius?: string;
+  aprsIsFilter?: string;
+        aprsIsPasscode?: string;
+  aprsIsIgateRfToIs?: boolean;
       }>,
     ): Promise<{ path: string; storage: 'portable' | 'userData' }> =>
       ipcRenderer.invoke('config:save-interfaces', interfaces),
@@ -141,7 +149,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
         interfaceId: string;
         interfaceName: string;
         packet: string;
-        source: 'kiss';
+        source: 'kiss' | 'aprs-is';
         direction: 'rx' | 'tx';
         category?: 'own-beacon' | 'own-weather' | 'own-message';
       }>
@@ -156,7 +164,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
         interfaceId: string;
         interfaceName: string;
         packet: string;
-        source: 'kiss';
+        source: 'kiss' | 'aprs-is';
         direction: 'rx' | 'tx';
         category?: 'own-beacon' | 'own-weather' | 'own-message';
       }) => void,

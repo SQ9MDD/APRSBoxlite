@@ -25,6 +25,8 @@ interface Window {
     };
     messages: {
       get(): Promise<import('./types').AprsMessage[]>;
+      markRead(recipient: string): Promise<void>;
+      deleteConversation(recipient: string): Promise<void>;
       send(message: {
         recipient: string;
         text: string;
@@ -48,6 +50,7 @@ interface Window {
       saveMapSettings(settings: import('./mapSettings').MapSettings): Promise<{ path: string; storage: 'portable' | 'userData' }>;
       saveMessageInterface(id: string): Promise<{ path: string; storage: 'portable' | 'userData' }>;
       saveMessagePath(recipient: string, path: string): Promise<{ path: string; storage: 'portable' | 'userData' }>;
+      updateTocalls(): Promise<{ count: number; generationTime?: string }>;
       exportBackup(): Promise<boolean>;
       importBackup(): Promise<boolean>;
       saveScrollerVisibility(visible: boolean): Promise<{ path: string; storage: 'portable' | 'userData' }>;
@@ -97,7 +100,7 @@ interface Window {
         interfaces: Array<{
           id: string;
           name: string;
-          type: 'kiss-tcp' | 'kiss-serial' | 'kiss-ble';
+          type: 'kiss-tcp' | 'kiss-serial' | 'kiss-ble' | 'aprs-is';
           enabled: boolean;
           txBlocked: boolean;
           hostPort: string;
@@ -107,6 +110,11 @@ interface Window {
           bleProfile?: 'rt-950-pro';
           bleDeviceId?: string;
           bleDeviceName?: string;
+          aprsIsServer?: string;
+          aprsIsRadius?: string;
+  aprsIsFilter?: string;
+          aprsIsPasscode?: string;
+  aprsIsIgateRfToIs?: boolean;
         }>,
       ): Promise<{ path: string; storage: 'portable' | 'userData' }>;
     };
@@ -119,7 +127,7 @@ interface Window {
           interfaceId: string;
           interfaceName: string;
           packet: string;
-          source: 'kiss';
+          source: 'kiss' | 'aprs-is';
           direction: 'rx' | 'tx';
           category?: 'own-beacon' | 'own-weather' | 'own-message';
         }>
@@ -134,7 +142,7 @@ interface Window {
           interfaceId: string;
           interfaceName: string;
           packet: string;
-          source: 'kiss';
+          source: 'kiss' | 'aprs-is';
           direction: 'rx' | 'tx';
           category?: 'own-beacon' | 'own-weather' | 'own-message';
         }) => void,

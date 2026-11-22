@@ -6,6 +6,7 @@ export interface AprsMessage {
   recipient: string;
   text: string;
   direction: 'rx' | 'tx';
+  unread?: boolean;
   status: 'received' | 'pending' | 'sent' | 'acked' | 'rejected' | 'failed';
   number?: string;
   path: string;
@@ -13,6 +14,7 @@ export interface AprsMessage {
   attempts: number;
   createdAt: string;
   error?: string;
+  kind?: 'position-response';
 }
 
 export type StationKind =
@@ -20,7 +22,8 @@ export type StationKind =
   | 'home'
   | 'mobile'
   | 'weather'
-  | 'digipeater';
+  | 'digipeater'
+  | 'object';
 
 export interface AprsDecodedData {
   courseDegrees?: number;
@@ -59,6 +62,8 @@ export interface AprsDevice {
 export interface Station {
   callsign: string;
   name: string;
+  entityType?: 'object' | 'item';
+  owner?: string;
   kind: StationKind;
   latitude: number;
   longitude: number;

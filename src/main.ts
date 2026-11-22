@@ -1,3 +1,4 @@
+import { validAprsIsFilter } from './aprsIsFilter';
 import { app, BrowserWindow, dialog, ipcMain, net, powerMonitor, protocol, session } from 'electron';
 import path from 'node:path';
 import * as fs from 'node:fs/promises';
@@ -15,6 +16,8 @@ import { createConfigurationBackup, readConfigurationBackup } from './main/confi
 import { filterTrafficFrames, formatTrafficLog, trafficLogFilename } from './trafficLog';
 import { KissSerialRxService } from './main/kissSerialRx';
 import { KissBleRxService } from './main/kissBleRx';
+import { loadSavedTocalls, updateTocalls } from './main/tocallUpdate';
+import { AprsIsRxService } from './main/aprsIsRx';
 import {
   KissTcpRxService,
   KissFrameDecoder,
@@ -40,7 +43,7 @@ interface StationConfiguration {
 interface InterfaceConfiguration {
   id: string;
   name: string;
-  type: 'kiss-tcp' | 'kiss-serial' | 'kiss-ble';
+  type: 'kiss-tcp' | 'kiss-serial' | 'kiss-ble' | 'aprs-is';
   enabled: boolean;
   txBlocked: boolean;
   hostPort: string;
@@ -50,6 +53,11 @@ interface InterfaceConfiguration {
   bleProfile?: 'rt-950-pro';
   bleDeviceId?: string;
   bleDeviceName?: string;
+  aprsIsServer?: string;
+  aprsIsRadius?: string;
+  aprsIsFilter?: string;
+  aprsIsPasscode?: string;
+  aprsIsIgateRfToIs?: boolean;
 }
 
 const existingUserDataDirectory = app.getPath('userData');
@@ -114,6 +122,7 @@ const createWindow = () => {
 let configStorage: ConfigStorage;
 let kissTcpRxService: KissTcpRxService;
 let kissSerialRxService: KissSerialRxService;
+let aprsIsRxService: AprsIsRxService;
 let messageService: MessageService;
 let messageStorage: MessageStorage | undefined;
 let beaconTimer: ReturnType<typeof setTimeout> | undefined;
@@ -229,7 +238,7 @@ function validateInterfaces(value: unknown): InterfaceConfiguration[] {
       return field.trim().slice(0, maximum);
     };
     const type = text('type', 16);
-    if (type !== 'kiss-tcp' && type !== 'kiss-serial' && type !== 'kiss-ble') {
+    if (type !== 'kiss-tcp' && type !== 'kiss-serial' && type !== 'kiss-ble' && type !== 'aprs-is') {
       throw new Error('Unsupported interface type.');
     }
     if (
@@ -237,6 +246,17 @@ function validateInterfaces(value: unknown): InterfaceConfiguration[] {
       typeof source.txBlocked !== 'boolean'
     ) {
       throw new Error('Invalid interface state.');
+    }
+    if (type === 'aprs-is') {
+      const server = typeof source.aprsIsServer === 'string' ? source.aprsIsServer.trim() : 'rotate.aprs2.net:14580';
+      const address = server.match(/^([^\s:]+):(\d{1,5})$/);
+      const radius = Number(typeof source.aprsIsRadius === 'string' ? source.aprsIsRadius : '25');
+      const passcode = typeof source.aprsIsPasscode === 'string' ? source.aprsIsPasscode.trim() : '';
+      if (!address || Number(address[2]) < 1 || Number(address[2]) > 65535) throw new Error('Invalid APRS-IS server or port.');
+      if (!Number.isFinite(radius) || radius <= 0 || radius > 10000) throw new Error('Invalid APRS-IS range.');
+      if (source.aprsIsFilter !== undefined && (typeof source.aprsIsFilter !== 'string' || !validAprsIsFilter(source.aprsIsFilter))) throw new Error('Invalid APRS-IS filter.');
+      if (passcode && !/^(?:-1|\d{1,5})$/.test(passcode)) throw new Error('Invalid APRS-IS passcode.');
+      if (source.aprsIsIgateRfToIs !== undefined && typeof source.aprsIsIgateRfToIs !== 'boolean') throw new Error('Invalid iGate setting.');
     }
     return {
       id: text('id', 80),
@@ -251,6 +271,7 @@ function validateInterfaces(value: unknown): InterfaceConfiguration[] {
       ...(type === 'kiss-ble' ? { bleProfile: 'rt-950-pro' as const } : {}),
       ...(type === 'kiss-ble' && typeof source.bleDeviceId === 'string' ? { bleDeviceId: text('bleDeviceId', 255) } : {}),
       ...(type === 'kiss-ble' && typeof source.bleDeviceName === 'string' ? { bleDeviceName: text('bleDeviceName', 255) } : {}),
+      ...(type === 'aprs-is' ? { aprsIsServer: typeof source.aprsIsServer === 'string' ? text('aprsIsServer', 255) : 'rotate.aprs2.net:14580', aprsIsRadius: typeof source.aprsIsRadius === 'string' ? text('aprsIsRadius', 16) : '25', ...(typeof source.aprsIsFilter === 'string' ? { aprsIsFilter: source.aprsIsFilter.trim() } : {}), aprsIsPasscode: typeof source.aprsIsPasscode === 'string' ? text('aprsIsPasscode', 6) : '', aprsIsIgateRfToIs: source.aprsIsIgateRfToIs === true } : {}),
     };
   });
 }
@@ -281,6 +302,9 @@ app.whenReady().then(async () => {
     userDataDirectory: app.getPath('userData'),
   });
   await configStorage.initialize();
+  const tocallPath = path.join(path.dirname(configStorage.getLocation().path), 'tocalls.json');
+  try { await loadSavedTocalls(tocallPath); }
+  catch (error) { console.error('Failed to load saved TOCALL database; using the bundled list:', error); }
   const tileCache = new MapTileCache(
     () => path.dirname(configStorage.getLocation().path),
     () => {
@@ -322,13 +346,15 @@ app.whenReady().then(async () => {
       broadcast('traffic:received', frame);
       if (frame.direction === 'rx') {
         stationStore.receive(frame.packet, frame.interfaceName);
-        messageService.receive(frame.packet, frame.interfaceId);
+        if (frame.source === 'kiss') aprsIsRxService.forwardRf(frame);
+        messageService.receive(frame.packet, frame.interfaceId, frame.source !== 'aprs-is' || aprsIsRxService.canTransmit(frame.interfaceId));
       }
     };
   const onKissStatus = (interfaceId: string, status: ConnectionStatus) =>
     broadcast('traffic:interface-status', { interfaceId, status });
   kissTcpRxService = new KissTcpRxService(onKissFrame, onKissStatus);
   kissSerialRxService = new KissSerialRxService(onKissFrame, onKissStatus);
+  aprsIsRxService = new AprsIsRxService(onKissFrame, onKissStatus, app.getVersion());
   const bleWrites = new Map<string, { sender: Electron.WebContents; resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   ipcMain.on('ble:write-result', (event, requestId: unknown, error: unknown) => {
     if (typeof requestId !== 'string') return;
@@ -346,10 +372,11 @@ app.whenReady().then(async () => {
     window.webContents.send('ble:write', { requestId, interfaceId, bytes });
   }));
   const configureKiss = (interfaces: InterfaceConfiguration[]) => {
-    const wired = interfaces.filter((item): item is InterfaceConfiguration & { type: 'kiss-tcp' | 'kiss-serial' } => item.type !== 'kiss-ble');
+    const wired = interfaces.filter((item): item is InterfaceConfiguration & { type: 'kiss-tcp' | 'kiss-serial' } => item.type === 'kiss-tcp' || item.type === 'kiss-serial');
     kissTcpRxService.configure(wired);
     kissSerialRxService.configure(wired);
     kissBleRxService.configure(interfaces);
+    aprsIsRxService.configure(interfaces, configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown; location?: unknown } | undefined);
   };
   ipcMain.on('ble:status', (event, id: unknown, status: unknown) => {
     if (!BrowserWindow.fromWebContents(event.sender) || typeof id !== 'string' || !['connecting', 'connected', 'disconnected', 'error'].includes(String(status))) return;
@@ -359,13 +386,15 @@ app.whenReady().then(async () => {
     if (BrowserWindow.fromWebContents(event.sender) && typeof id === 'string' && bytes instanceof Uint8Array) kissBleRxService.receive(id, bytes);
   });
   const transmitKiss = (interfaceId: string, frame: Uint8Array) =>
-    kissBleRxService.isConfigured(interfaceId)
+    aprsIsRxService.isConfigured(interfaceId)
+      ? aprsIsRxService.transmit(interfaceId, frame)
+      : kissBleRxService.isConfigured(interfaceId)
       ? kissBleRxService.transmit(interfaceId, frame)
       : kissSerialRxService.isConfigured(interfaceId)
       ? kissSerialRxService.transmit(interfaceId, frame)
       : kissTcpRxService.transmit(interfaceId, frame);
-  const kissStatuses = () => ({ ...kissTcpRxService.getStatuses(), ...kissSerialRxService.getStatuses(), ...kissBleRxService.getStatuses() });
-  const kissHistory = () => [...kissTcpRxService.getHistory(), ...kissSerialRxService.getHistory(), ...kissBleRxService.getHistory()]
+  const kissStatuses = () => ({ ...kissTcpRxService.getStatuses(), ...kissSerialRxService.getStatuses(), ...kissBleRxService.getStatuses(), ...aprsIsRxService.getStatuses() });
+  const kissHistory = () => [...kissTcpRxService.getHistory(), ...kissSerialRxService.getHistory(), ...kissBleRxService.getHistory(), ...aprsIsRxService.getHistory()]
     .sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt)).slice(0, 1000);
   const notifyPower = (event: 'system:suspend' | 'system:resume') => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -376,6 +405,7 @@ app.whenReady().then(async () => {
   powerMonitor.on('resume', () => {
     kissTcpRxService.reconnectAfterResume();
     kissSerialRxService.reconnectAfterResume();
+    aprsIsRxService.reconnectAfterResume();
     notifyPower('system:resume');
   });
   messageService = new MessageService(
@@ -396,6 +426,16 @@ app.whenReady().then(async () => {
       persistMessages(messages);
     },
     storedMessages,
+    (sender) => {
+      const config = configStorage.getConfiguration();
+      const paths = config.messagePaths as Record<string, unknown> | undefined;
+      const path = paths && typeof paths[sender] === 'string' ? paths[sender] as string : '';
+      return {
+        path,
+        version: app.getVersion(),
+        position: () => encodeBeacon({ ...validateStationConfiguration(config.station), beaconPath: path }),
+      };
+    },
   );
   if (storedMessages.some((message) => message.status === 'pending'))
     persistMessages(messageService.snapshot());
@@ -409,6 +449,16 @@ app.whenReady().then(async () => {
   }
   ipcMain.handle('config:get-active-path', () => configStorage.getLocation());
   ipcMain.handle('config:get', () => configStorage.getConfiguration());
+  let tocallUpdate: Promise<{ count: number; generationTime?: string }> | undefined;
+  ipcMain.handle('tocall:update', () => {
+    if (!tocallUpdate) {
+      tocallUpdate = updateTocalls((url, options) => net.fetch(url, options), tocallPath).then((result) => {
+        stationStore.refreshDeviceIdentification();
+        return result;
+      }).finally(() => { tocallUpdate = undefined; });
+    }
+    return tocallUpdate;
+  });
   let configWrites = Promise.resolve();
   const updateConfig = (patch: Record<string, unknown>) => {
     const write = configWrites.then(() =>
@@ -487,6 +537,7 @@ app.whenReady().then(async () => {
   scheduleBeacon();
   ipcMain.handle('config:save-station', (_event, station: unknown) =>
     updateConfig({ station: validateStationConfiguration(station) }).then((location) => {
+      aprsIsRxService.configure(validateInterfaces(configStorage.getConfiguration().interfaces ?? []), configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown; location?: unknown } | undefined);
       scheduleBeacon();
       return location;
     }),
@@ -637,6 +688,14 @@ app.whenReady().then(async () => {
       throw new Error('Invalid message.');
     return messageService.send(recipient, text, interfaceId, path);
   });
+  ipcMain.handle('messages:mark-read', (_event, recipient: unknown) => {
+    if (typeof recipient !== 'string') throw new Error('Invalid conversation.');
+    messageService.markConversationRead(recipient);
+  });
+  ipcMain.handle('messages:delete-conversation', (_event, recipient: unknown) => {
+    if (typeof recipient !== 'string') throw new Error('Invalid conversation.');
+    messageService.deleteConversation(recipient);
+  });
   ipcMain.handle('messages:retry', (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('Invalid message ID.');
     return messageService.retry(id);
@@ -674,6 +733,7 @@ app.on('before-quit', (event) => {
   clearTimeout(beaconTimer);
   kissTcpRxService?.stop();
   kissSerialRxService?.stop();
+  aprsIsRxService?.stop();
   stationStore.dispose();
   messageService?.dispose();
   void (messageStorage?.flush() ?? Promise.resolve()).catch((error) => {

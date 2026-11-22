@@ -45,7 +45,7 @@ export class MessageStorage {
   }
 
   save(messages: AprsMessage[]): Promise<void> {
-    const snapshot = structuredClone(messages.slice(-MAX_MESSAGES));
+    const snapshot = structuredClone(messages.slice(-MAX_MESSAGES).map(({ unread: _unread, ...message }) => message));
     const operation = this.pending.then(async () => {
       await fs.mkdir(path.dirname(this.file), { recursive: true });
       const temporary = `${this.file}.${process.pid}.${crypto.randomUUID()}.tmp`;

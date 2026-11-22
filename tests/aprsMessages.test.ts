@@ -6,10 +6,128 @@ import type { AprsMessage } from '../src/types.ts';
 
 registerHooks({
   resolve(specifier, context, next) {
-    return next(specifier === '../aprsMessageControl' ? `${specifier}.ts` : specifier, context);
+    return next(['../aprsMessageControl', './aprsPosition', './kissTcpRx'].includes(specifier) ? `${specifier}.ts` : specifier, context);
   },
 });
-const { MessageService, encodeKissMessage, parseAprsMessage } = await import('../src/main/aprsMessages.ts');
+
+const { MessageService, encodeKissFrame, encodeKissMessage, parseAprsMessage } = await import('../src/main/aprsMessages.ts');
+test('decodes the sender of APRSBox third-party messages', () => {
+  const parsed = parseAprsMessage('SR0DZ>APDW16,SR5NWA*,WIDE1*:}SQ2IBK>APRS,TCPIP,SR0DZ*::SQ9MDD-4 :test third-party{12');
+  assert.equal(parsed?.sender, 'SQ2IBK');
+  assert.equal(parsed?.addressee, 'SQ9MDD-4');
+  assert.equal(parsed?.text, 'test third-party');
+  assert.equal(parsed?.number, '12');
+});
+
+test('sends queries once without a message number or ACK retries', async () => {
+  mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const frames: Uint8Array[] = [];
+  const service = new MessageService(() => 'SQ9MDD-4', async (_id, frame) => { frames.push(frame); }, () => undefined);
+  try {
+    await service.send('SP8ABC', '?APRSP', 'VHF', 'WIDE1-1');
+    assert.equal(new KissFrameDecoder().consume(frames[0])[0], 'SQ9MDD-4>APBOX1,WIDE1-1::SP8ABC   :?APRSP');
+    assert.equal(service.snapshot()[0].status, 'sent');
+    mock.timers.tick(120_000);
+    assert.equal(frames.length, 1);
+  } finally { service.dispose(); mock.timers.reset(); }
+});
+
+test('answers the numbered TH-D75 query even when its number was used by another message', async () => {
+  mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const frames: Array<{ interfaceId: string; frame: Uint8Array }> = [];
+  const initial: AprsMessage[] = [{ id: 'old', sender: 'SQ9MDD-7', recipient: 'SQ9MDD-15', text: 'Earlier message', direction: 'rx', status: 'received', number: '76', path: '', interfaceId: 'BT', attempts: 0, createdAt: new Date().toISOString() }];
+  const service = new MessageService(() => 'SQ9MDD-15', async (interfaceId, frame) => { frames.push({ interfaceId, frame }); }, () => undefined, initial, () => ({ version: '0.1.1-beta', path: '', position: () => new Uint8Array() }));
+  try {
+    const packet = 'SQ9MDD-7>APK005,RFONLY::SQ9MDD-15:?VER{76';
+    assert.deepEqual(parseAprsMessage(packet), { sender: 'SQ9MDD-7', addressee: 'SQ9MDD-15', text: '?VER', number: '76', replyAck: undefined });
+    service.receive(packet, 'BT');
+    service.receive(packet, 'BT');
+    mock.timers.tick(5000);
+    await Promise.resolve();
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0].interfaceId, 'BT');
+    assert.equal(new KissFrameDecoder().consume(frames[0].frame)[0], 'SQ9MDD-15>APBOX1::SQ9MDD-7 :APRSBox Lite 0.1.1-beta');
+    assert.deepEqual(service.snapshot().slice(1).map((message) => message.text), ['?VER', 'APRSBox Lite 0.1.1-beta']);
+  } finally { service.dispose(); mock.timers.reset(); }
+});
+
+test('answers the observed TH-D75 KISS frame with a trailing carriage return', async () => {
+  mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const frames: Array<{ interfaceId: string; frame: Uint8Array }> = [];
+  const service = new MessageService(() => 'SQ9MDD-15', async (interfaceId, frame) => { frames.push({ interfaceId, frame }); }, () => undefined, [], () => ({ version: '0.1.1-beta', path: '', position: () => new Uint8Array() }));
+  const address = (call: string, ssid: number, last: boolean) => [
+    ...Buffer.from(call.padEnd(6, ' ')).map((byte) => byte << 1),
+    0x60 | (ssid << 1) | (last ? 1 : 0),
+  ];
+  try {
+    const raw = Buffer.from([0xc0, 0x00, ...address('APK005', 0, false), ...address('SQ9MDD', 7, false), ...address('RFONLY', 0, true), 0x03, 0xf0, ...Buffer.from(':SQ9MDD-15:?VER{77\r'), 0xc0]);
+    const received = new KissFrameDecoder().consume(raw)[0];
+    assert.equal(received, 'SQ9MDD-7>APK005,RFONLY::SQ9MDD-15:?VER{77\r');
+    assert.equal(parseAprsMessage(received)?.number, '77');
+    assert.equal(parseAprsMessage(received)?.text, '?VER');
+    service.receive(received, 'VHF-DIGI');
+    service.receive(received, 'VHF-DIGI');
+    mock.timers.tick(5000);
+    await Promise.resolve();
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0].interfaceId, 'VHF-DIGI');
+    assert.equal(new KissFrameDecoder().consume(frames[0].frame)[0], 'SQ9MDD-15>APBOX1::SQ9MDD-7 :APRSBox Lite 0.1.1-beta');
+    assert.equal(parseAprsMessage('SQ9MDD-7>APK005::SQ9MDD-15:?VER{77\r\n')?.number, '77');
+  } finally { service.dispose(); mock.timers.reset(); }
+});
+
+test('answers addressed APRS queries once and does not ACK numbered queries', async () => {
+  mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const frames: Uint8Array[] = [];
+  const service = new MessageService(() => 'SQ9MDD-4', async (_id, frame) => { frames.push(frame); }, () => undefined, [], () => ({
+    version: '0.1.1-beta', path: 'WIDE1-1',
+    position: () => encodeKissFrame('SQ9MDD-4', '=5213.78N/02100.73E>Test', 'WIDE1-1'),
+  }));
+  const decode = (frame: Uint8Array) => new KissFrameDecoder().consume(frame)[0];
+  try {
+    const numbered = 'SP8ABC>APK005,RFONLY::SQ9MDD-4 :?APRS{49';
+    service.receive(numbered, 'VHF');
+    service.receive(numbered, 'VHF');
+    assert.equal(frames.length, 0);
+    assert.deepEqual(service.snapshot().map((item) => item.text), ['?APRS', 'Queries: ?APRS ?APRSP ?VER']);
+    mock.timers.tick(4999);
+    assert.equal(frames.length, 0);
+    mock.timers.tick(1);
+    await Promise.resolve();
+    assert.equal(decode(frames[0]), 'SQ9MDD-4>APBOX1,WIDE1-1::SP8ABC   :Queries: ?APRS ?APRSP ?VER');
+    service.receive('SP8ABC>APRS::SQ9MDD-4 :?APRSP', 'VHF');
+    service.receive('SP8ABC>APRS::SQ9MDD-4 :?VER', 'VHF');
+    await Promise.resolve();
+    assert.equal(decode(frames[1]), 'SQ9MDD-4>APBOX1,WIDE1-1:=5213.78N/02100.73E>Test');
+    assert.equal(decode(frames[2]), 'SQ9MDD-4>APBOX1,WIDE1-1::SP8ABC   :APRSBox Lite 0.1.1-beta');
+    service.receive('SP8ABC>APRS::ALL      :?VER{88', 'VHF');
+    service.receive('SQ9MDD-4>APRS::SQ9MDD-4 :?VER{89', 'VHF');
+    service.receive('SP8ABC>APRS::SQ9MDD-4 :?UNKNOWN{90', 'VHF');
+    mock.timers.tick(90_000);
+    await Promise.resolve();
+    assert.equal(frames.length, 3);
+    assert.equal(service.snapshot().filter((item) => item.direction === 'tx').length, 3);
+  } finally { service.dispose(); mock.timers.reset(); }
+});
+
+test('retries a failed position response as a beacon, respecting the transmit error', async () => {
+  let blocked = true;
+  const frames: Uint8Array[] = [];
+  const service = new MessageService(() => 'SQ9MDD-4', async (_id, frame) => {
+    if (blocked) throw new Error('TX blocked');
+    frames.push(frame);
+  }, () => undefined, [], () => ({ version: '1', path: '', position: () => encodeKissFrame('SQ9MDD-4', '=5213.78N/02100.73E>Test', '') }));
+  try {
+    service.receive('SP8ABC>APRS::SQ9MDD-4 :?APRSP', 'VHF');
+    await Promise.resolve();
+    const response = service.snapshot().find((item) => item.direction === 'tx');
+    assert.equal(response?.status, 'failed');
+    assert.match(response?.error ?? '', /TX blocked/);
+    blocked = false;
+    await service.retry(response!.id);
+    assert.equal(new KissFrameDecoder().consume(frames[0])[0], 'SQ9MDD-4>APBOX1:=5213.78N/02100.73E>Test');
+  } finally { service.dispose(); }
+});
 
 test('encodes APRS message into a KISS AX.25 UI frame', () => {
   const decoder = new KissFrameDecoder();
@@ -212,4 +330,42 @@ test('accepts the reported nine-character SSID ACK and stops retries despite rep
     service.dispose();
     mock.timers.reset();
   }
+});
+
+test('deleting a conversation cancels retries and keeps other conversations', async () => {
+  mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const frames: Uint8Array[] = [];
+  const changes: AprsMessage[][] = [];
+  const service = new MessageService(() => 'SQ9MDD-4', async (_id, frame) => { frames.push(frame); }, (messages) => changes.push(messages));
+  try {
+    await service.send('SP8ABC', 'Hello', 'VHF', '');
+    service.receive('SP8ABC>APRS::SQ9MDD-4 :Hi', 'VHF');
+    service.receive('SP8XYZ>APRS::SQ9MDD-4 :Other', 'VHF');
+    service.receive('SP8ABC>APRS::ALL      :Group', 'VHF');
+    service.deleteConversation('SP8ABC');
+    assert.deepEqual(service.snapshot().map((message) => message.text), ['Other', 'Group']);
+    assert.deepEqual(changes.at(-1)?.map((message) => message.text), ['Other', 'Group']);
+    mock.timers.tick(120_000);
+    assert.equal(frames.length, 1);
+    service.deleteConversation('ALL');
+    assert.deepEqual(service.snapshot().map((message) => message.text), ['Other']);
+  } finally { service.dispose(); mock.timers.reset(); }
+});
+
+test('tracks unread incoming conversations until opened or deleted', () => {
+  const service = new MessageService(() => 'SQ9MDD-4', async () => undefined, () => undefined);
+  try {
+    service.receive('SP8ABC>APRS::SQ9MDD-4 :Hello', 'VHF', false);
+    service.receive('SP8XYZ>APRS::SQ9MDD-4 :Other', 'VHF', false);
+    service.receive('SP8DEF>APRS::SQ9MDD-4 :?VER{77', 'VHF', false);
+    assert.deepEqual(service.snapshot().map((message) => message.unread), [true, true, false]);
+    service.markConversationRead('SP8ABC');
+    assert.deepEqual(service.snapshot().map((message) => message.unread), [false, true, false]);
+    service.deleteConversation('SP8XYZ');
+    assert.equal(service.snapshot().some((message) => message.unread), false);
+    service.receive('SP8ABC>APRS::ALL      :Group', 'VHF', false);
+    assert.equal(service.snapshot().at(-1)?.unread, true);
+    service.markConversationRead('ALL');
+    assert.equal(service.snapshot().at(-1)?.unread, false);
+  } finally { service.dispose(); }
 });

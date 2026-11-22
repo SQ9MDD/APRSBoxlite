@@ -102,7 +102,7 @@ function stationDetails(
     button.textContent = label;
     button.addEventListener('click', (event) => {
       event.stopPropagation();
-      onAction(action, station.callsign);
+      onAction(action, action === 'message' && station.owner ? station.owner : station.callsign);
     });
     actions.append(button);
   }
@@ -166,6 +166,17 @@ export function renderMapView({
       syncMask();
       L.control.zoom({ position: 'bottomleft' }).addTo(map);
       const source = activeMapSource(mapSettings);
+      const centerStation = (event: Event) => {
+        const { latitude, longitude, panelLeft } = (event as CustomEvent<{ latitude: number; longitude: number; panelLeft?: number }>).detail;
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+        const zoom = Math.min(18, source.maxZoom, map.getMaxZoom());
+        const mapWidth = map.getSize().x;
+        const visibleWidth = panelLeft === undefined ? mapWidth : Math.max(0, Math.min(mapWidth, panelLeft - mapElement.getBoundingClientRect().left));
+        const offset = (mapWidth - visibleWidth) / 2;
+        const center = map.unproject(map.project([latitude, longitude], zoom).add([offset, 0]), zoom);
+        map.setView(center, zoom);
+      };
+      window.addEventListener('aprs-map:center-station', centerStation);
       L.tileLayer(mapTileUrl(source), {
         maxZoom: 19,
         minZoom: source.minZoom,
@@ -208,6 +219,7 @@ export function renderMapView({
               station.comment !== previous.comment ||
               station.aprsClient !== previous.aprsClient ||
               station.aprsDevice !== previous.aprsDevice ||
+              station.owner !== previous.owner ||
               station.sourceInterface !== previous.sourceInterface ||
               station.path !== previous.path ||
               station.latitude !== previous.latitude ||
@@ -256,6 +268,7 @@ export function renderMapView({
         window.removeEventListener('aprs-map:overlays', updateVisibility);
         window.removeEventListener('aprs-map:visible', resize);
         window.removeEventListener('aprs-map:reset', resetMapView);
+        window.removeEventListener('aprs-map:center-station', centerStation);
         map.off('resize zoom move', syncMask);
         map.remove();
       };

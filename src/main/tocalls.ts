@@ -9,10 +9,10 @@ interface DeviceEntry {
   features?: string[];
 }
 
-const entries = database.tocalls as Record<string, DeviceEntry>;
-const mice = database.mice as Record<string, DeviceEntry>;
-const legacy = database.micelegacy as Record<string, DeviceEntry>;
-const classes = database.classes as Record<string, { shown?: string; description?: string }>;
+let entries = database.tocalls as Record<string, DeviceEntry>;
+let mice = database.mice as Record<string, DeviceEntry>;
+let legacy = database.micelegacy as Record<string, DeviceEntry>;
+let classes = database.classes as Record<string, { shown?: string; description?: string }>;
 const classFallbacks: Record<string, [string, string]> = {
   app: ['Mobile app', 'Mobile phone or tablet APRS app'],
   daemon: ['Background software', 'Computer software without a user interface'],
@@ -29,9 +29,44 @@ const classFallbacks: Record<string, [string, string]> = {
   tracker: ['Tracker', 'Tracker device'],
   wx: ['Weather station', 'Dedicated APRS weather station'],
 };
-const wildcardPatterns = Object.keys(entries)
+function getWildcardPatterns(values: Record<string, DeviceEntry>): string[] {
+  return Object.keys(values)
   .filter((pattern) => pattern.includes('?'))
   .sort((a, b) => (a.match(/\?/g)?.length ?? 0) - (b.match(/\?/g)?.length ?? 0) || a.localeCompare(b, 'en'));
+}
+let wildcardPatterns = getWildcardPatterns(entries);
+
+export function replaceTocallDatabase(payload: unknown, activate = true): { count: number; generationTime?: string } {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Invalid TOCALL database.');
+  const root = payload as Record<string, unknown>;
+  const readSection = (value: unknown, required = false): Record<string, DeviceEntry> => {
+    if (value === undefined && !required) return {};
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid TOCALL database section.');
+    const result: Record<string, DeviceEntry> = Object.create(null);
+    for (const [key, raw] of Object.entries(value)) {
+      if (!key || key.length > 64 || !raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid TOCALL database entry.');
+      const entry = raw as Record<string, unknown>;
+      for (const field of ['model', 'vendor', 'os', 'class']) if (entry[field] !== undefined && typeof entry[field] !== 'string') throw new Error('Invalid TOCALL database metadata.');
+      if (entry.features !== undefined && (!Array.isArray(entry.features) || !entry.features.every((item: unknown) => typeof item === 'string'))) throw new Error('Invalid TOCALL database features.');
+      result[key] = entry as DeviceEntry;
+    }
+    return result;
+  };
+  const tocalls = readSection(root.tocalls, true);
+  if (!Object.keys(tocalls).length) throw new Error('TOCALL database is empty.');
+  const nextEntries: Record<string, DeviceEntry> = Object.create(null);
+  for (const [key, value] of Object.entries(tocalls)) nextEntries[key.toUpperCase()] = value;
+  const nextMice = readSection(root.mice);
+  const nextLegacy = readSection(root.micelegacy);
+  const nextClasses = readSection(root.classes) as Record<string, { shown?: string; description?: string }>;
+  for (const value of Object.values(nextClasses)) if ((value.shown !== undefined && typeof value.shown !== 'string') || (value.description !== undefined && typeof value.description !== 'string')) throw new Error('Invalid TOCALL class metadata.');
+  if (activate) {
+    entries = nextEntries; mice = nextMice; legacy = nextLegacy; classes = nextClasses;
+    wildcardPatterns = getWildcardPatterns(entries);
+  }
+  const meta = root.meta as Record<string, unknown> | undefined;
+  return { count: Object.keys(nextEntries).length, generationTime: typeof meta?.generation_time === 'string' ? meta.generation_time : undefined };
+}
 
 export function identifyAprsDevice(destination: string, info = ''): AprsDevice | undefined {
   const value = destination.trim().toUpperCase().replace(/-\d+$/, '');

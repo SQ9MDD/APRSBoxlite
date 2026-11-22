@@ -1,4 +1,4 @@
-import { decodeAprsPosition } from './aprsPosition';
+import { decodeAprsPosition, unwrapAprsPacket } from './aprsPosition';
 import { identifyAprsDevice } from './tocalls';
 import { decodeAprsExtensions } from './aprsExtensions';
 import type { Station } from '../types';
@@ -18,15 +18,22 @@ export class StationStore {
 
   receive(packet: string, sourceInterface?: string): void {
     const position = decodeAprsPosition(packet);
-    const headerMatch = packet.match(
+    const effectivePacket = unwrapAprsPacket(packet);
+    if (!effectivePacket) return;
+    const headerMatch = effectivePacket.match(
       /^\s*([A-Z0-9]{1,6}(?:-\d{1,2})?)>\s*([^,:\s]+)(?:,([^:]*))?:/i,
     );
     if (!headerMatch) return;
-    const callsign = headerMatch[1].toUpperCase().replace(/-0$/, '');
+    const source = headerMatch[1].toUpperCase().replace(/-0$/, '');
+    const callsign = position?.entityType ? position.callsign : source;
     const destination = headerMatch[2].toUpperCase();
     const path = headerMatch[3] ?? '';
     const previous = this.stations.get(callsign);
-    const device = identifyAprsDevice(destination, packet.slice(packet.indexOf(':') + 1)) ?? previous?.aprsDevice;
+    const device = identifyAprsDevice(destination, effectivePacket.slice(effectivePacket.indexOf(':') + 1)) ?? previous?.aprsDevice;
+    if (position?.entityType && position.alive === false) {
+      if (previous?.entityType === position.entityType) { this.stations.delete(callsign); this.publish(); }
+      return;
+    }
     if (!position) {
       if (
         !previous ||
@@ -75,10 +82,11 @@ export class StationStore {
       destination,
       path,
       sourceInterface,
-      name: 'APRS station',
+      name: position.entityType === 'object' ? 'APRS object' : position.entityType === 'item' ? 'APRS item' : 'APRS station',
       kind:
-        packet.split(':', 2)[1]?.startsWith("'") ||
-        packet.split(':', 2)[1]?.startsWith('`') ||
+        position.entityType ? 'object' :
+        effectivePacket.split(':', 2)[1]?.startsWith("'") ||
+        effectivePacket.split(':', 2)[1]?.startsWith('`') ||
         track.length > 1
           ? 'mobile'
           : position.symbol[1] === '_'
@@ -86,7 +94,7 @@ export class StationStore {
             : 'station',
       lastHeard: new Date(now).toISOString(),
       positionReceivedAt: new Date(now).toISOString(),
-      decoded: decodeAprsExtensions(packet, position.comment, position.symbol),
+      decoded: decodeAprsExtensions(effectivePacket, position.comment, position.symbol),
       track: track.slice(-MAX_TRACK_POINTS),
       phg,
     });
@@ -105,6 +113,19 @@ export class StationStore {
           Date.parse(station.positionReceivedAt ?? station.lastHeard) > cutoff,
       )
       .reverse();
+  }
+
+  refreshDeviceIdentification(): void {
+    let changed = false;
+    for (const [key, station] of this.stations) {
+      if (!station.destination) continue;
+      const micE = station.aprsDevice?.identifierKind === 'mic-e' ? `\`AAAAAAAA${station.aprsDevice.actualIdentifier}` : '';
+      const device = identifyAprsDevice(station.destination, micE);
+      if (JSON.stringify(device) === JSON.stringify(station.aprsDevice)) continue;
+      this.stations.set(key, { ...station, aprsDevice: device, aprsClient: device?.identifiedAs });
+      changed = true;
+    }
+    if (changed) this.publish();
   }
 
   dispose(): void {

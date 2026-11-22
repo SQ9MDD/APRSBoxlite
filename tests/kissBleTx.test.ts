@@ -32,3 +32,17 @@ test('BLE TX checks permission and connection and logs only successful KISS writ
   assert.equal(traffic[0].direction, 'tx');
   assert.match(traffic[0].packet, /^SP5ABC-1>APBOX1:/);
 });
+
+test('disabling BLE publishes disconnected and ignores late connected events', () => {
+  const statuses: string[] = [];
+  const service = new KissBleRxService(() => undefined, (_id, status) => statuses.push(status), async () => undefined);
+  const config = { id: 'ble', name: 'BLE TNC', type: 'kiss-ble', enabled: true, txBlocked: false };
+  service.configure([config]);
+  service.status('ble', 'connected');
+  service.configure([{ ...config, enabled: false }]);
+  service.status('ble', 'connected');
+  assert.deepEqual(statuses, ['connected', 'disconnected']);
+  assert.equal(service.getStatuses().ble, 'disconnected');
+  service.configure([config]);
+  assert.equal(service.getStatuses().ble, 'disconnected');
+});

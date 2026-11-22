@@ -32,6 +32,7 @@ export function stationFields(
     add('Capabilities', device.features.join(', '));
   }
   add('Last activity', new Date(station.lastHeard).toLocaleString());
+  if (station.entityType) add('Owner', station.owner);
   add('Interface', station.sourceInterface);
   add('Destination', station.destination);
   add('Path', station.path || 'Direct');

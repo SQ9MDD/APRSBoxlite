@@ -2588,6 +2588,15 @@ button {
   flex: 1;
   scrollbar-color: #477db0 #102134;
 }
+.messages-conversation-row { display: flex; align-items: stretch; border-bottom: 1px solid #213b53; }
+.messages-conversations .messages-conversation-row > button:first-child { flex: 1; min-width: 0; border-bottom: 0; }
+.messages-conversations .messages-conversation-row > .messages-delete { width: 40px; flex: none; padding: 8px; border-bottom: 0; text-align: center; }
+.messages-delete img {
+  width: 18px;
+  height: 18px;
+  vertical-align: middle;
+  filter: invert(81%) sepia(14%) saturate(566%) hue-rotate(170deg) brightness(94%) contrast(90%);
+}
 .messages-conversations button {
   width: 100%;
   padding: 10px 12px;
@@ -2688,6 +2697,10 @@ button {
 :root[data-theme='light'] .message-bubble button {
   color: #235f96;
 }
+:root[data-theme='light'] .messages-delete img {
+  filter: invert(20%) sepia(33%) saturate(1800%) hue-rotate(171deg) brightness(94%) contrast(90%);
+}
+:root[data-theme='light'] .messages-conversation-row { border-color: #c8d9e7; }
 :root[data-theme='light'] .messages-conversations button:hover,
 :root[data-theme='light'] .messages-conversations button.is-selected {
   background: #dceaf5;
@@ -2899,3 +2912,9 @@ button {
 :root[data-theme='light'] .ble-status {
   color: #536a80;
 }
+
+/* Unread messages use the same warning colors as APRSBOX. */
+.nav-item.has-unread, .nav-item.has-unread:hover, .nav-item.has-unread.is-active { color: #d9b565; }
+.nav-item.has-unread .nav-icon { filter: invert(73%) sepia(30%) saturate(669%) hue-rotate(355deg) brightness(99%) contrast(89%); }
+:root[data-theme='light'] .nav-item.has-unread, :root[data-theme='light'] .nav-item.has-unread:hover, :root[data-theme='light'] .nav-item.has-unread.is-active { color: #8f6b1d; }
+:root[data-theme='light'] .nav-item.has-unread .nav-icon { filter: invert(39%) sepia(54%) saturate(656%) hue-rotate(8deg) brightness(97%) contrast(90%); }

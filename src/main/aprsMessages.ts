@@ -1,11 +1,14 @@
 import type { AprsMessage } from '../types';
 import { parseMessageControl } from '../aprsMessageControl';
+import { unwrapAprsPacket } from './aprsPosition';
+import { KissFrameDecoder } from './kissTcpRx';
 
 const CALLSIGN = /^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/;
 const GROUPS = new Set(['ALL', 'QST', 'CQ']);
 const RETRY_DELAYS = [8_000, 16_000, 32_000];
 const DEDUPLICATION_AGE = 60 * 60 * 1000;
 const MAX_MESSAGES = 1000;
+type QuerySettings = { path: string; version: string; position: () => Uint8Array };
 
 export function normalizeCallsign(value: string): string {
   const callsign = value.trim().toUpperCase();
@@ -69,7 +72,8 @@ export function parseAprsMessage(packet: string):
       control?: 'ack' | 'rej';
     }
   | undefined {
-  const header = packet.match(/^([A-Z0-9-]+)>[^:]+::(.{9}):(.+)$/is);
+  const effectivePacket = unwrapAprsPacket(packet);
+  const header = effectivePacket?.match(/^([A-Z0-9-]+)>[^:]+::(.{9}):(.+)$/is);
   if (!header) return undefined;
   let sender: string;
   try {
@@ -78,7 +82,9 @@ export function parseAprsMessage(packet: string):
     return undefined;
   }
   const addressee = header[2].trim().toUpperCase().replace(/-0$/, '');
-  const field = header[3];
+  // Some TNCs include a line terminator in the AX.25 information field.
+  const field = header[3].replace(/[\r\n]+$/, '');
+  if (!field) return undefined;
   const control = parseMessageControl(field);
   if (control)
     return {
@@ -108,6 +114,7 @@ export function parseAprsMessage(packet: string):
 
 export class MessageService {
   private messages: AprsMessage[] = [];
+  private unreadIds = new Set<string>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private acknowledgements = new Set<ReturnType<typeof setTimeout>>();
   private nextNumber = 0;
@@ -117,16 +124,19 @@ export class MessageService {
     frame: Uint8Array,
   ) => Promise<void>;
   private readonly onChange: (messages: AprsMessage[]) => void;
+  private readonly querySettings?: (sender: string) => QuerySettings;
 
   constructor(
     ownCallsign: () => string,
     transmit: (interfaceId: string, frame: Uint8Array) => Promise<void>,
     onChange: (messages: AprsMessage[]) => void,
     initialMessages: AprsMessage[] = [],
+    querySettings?: (sender: string) => QuerySettings,
   ) {
     this.ownCallsign = ownCallsign;
     this.transmit = transmit;
     this.onChange = onChange;
+    this.querySettings = querySettings;
     this.messages = structuredClone(initialMessages.slice(-MAX_MESSAGES)).map((message) =>
       message.status === 'pending'
         ? { ...message, status: 'failed', error: 'Interrupted by application restart. Retry if needed.' }
@@ -135,7 +145,33 @@ export class MessageService {
   }
 
   snapshot(): AprsMessage[] {
-    return structuredClone(this.messages);
+    return structuredClone(this.messages.map((message) => ({ ...message, unread: this.unreadIds.has(message.id) })));
+  }
+
+  markConversationRead(recipient: string): void {
+    const target = normalizeCallsign(recipient);
+    let changed = false;
+    for (const message of this.messages) {
+      const conversation = message.direction === 'tx' ? message.recipient : GROUPS.has(message.recipient) ? message.recipient : message.sender;
+      if (conversation === target && this.unreadIds.delete(message.id)) changed = true;
+    }
+    if (changed) this.publish();
+  }
+
+  deleteConversation(recipient: string): void {
+    const target = normalizeCallsign(recipient);
+    const removed = this.messages.filter((message) =>
+      (message.direction === 'tx' ? message.recipient : GROUPS.has(message.recipient) ? message.recipient : message.sender) === target,
+    );
+    if (!removed.length) return;
+    for (const message of removed) {
+      this.unreadIds.delete(message.id);
+      clearTimeout(this.timers.get(message.id));
+      this.timers.delete(message.id);
+    }
+    const ids = new Set(removed.map((message) => message.id));
+    this.messages = this.messages.filter((message) => !ids.has(message.id));
+    this.publish();
   }
 
   async send(
@@ -157,7 +193,7 @@ export class MessageService {
         'Use 1–67 printable ASCII characters, excluding { and }.',
       );
     const group = GROUPS.has(target);
-    const number = group ? undefined : this.allocateNumber(target);
+    const number = group || body.startsWith('?') ? undefined : this.allocateNumber(target);
     const info = body + (number ? `{${number}` : '');
     const frame = encodeKissMessage(source, target, info, path);
     const message: AprsMessage = {
@@ -178,7 +214,7 @@ export class MessageService {
     await this.attempt(message, frame);
   }
 
-  receive(packet: string, interfaceId: string): void {
+  receive(packet: string, interfaceId: string, allowAutomaticResponses = true): void {
     const parsed = parseAprsMessage(packet);
     if (!parsed) return;
     let local: string;
@@ -199,7 +235,8 @@ export class MessageService {
         );
       return;
     }
-    if (direct && parsed.replyAck)
+    const isQuery = parsed.text.startsWith('?');
+    if (direct && !isQuery && parsed.replyAck)
       this.resolveAcknowledgement(parsed.sender, parsed.replyAck, 'ack');
     const duplicate = this.messages.some(
       (message) =>
@@ -208,28 +245,34 @@ export class MessageService {
         message.sender === parsed.sender &&
         message.recipient === parsed.addressee &&
         (parsed.number
-          ? message.number === parsed.number
-          : !message.number &&
+          ? message.number === parsed.number && (!isQuery || message.text === parsed.text)
+          : !isQuery && !message.number &&
             message.text === parsed.text &&
             Date.now() - Date.parse(message.createdAt) < 30_000),
     );
     if (!duplicate) {
+      const messageId = crypto.randomUUID();
+      if (!isQuery || !direct) this.unreadIds.add(messageId);
       this.messages.push({
-        id: crypto.randomUUID(),
+        id: messageId,
         sender: parsed.sender,
         recipient: parsed.addressee,
         text: parsed.text,
         direction: 'rx',
         status: 'received',
         number: parsed.number,
-        path: '',
+        path: isQuery ? (unwrapAprsPacket(packet)?.match(/^[^>]+>[^,:]+(?:,([^:]*))?:/)?.[1] ?? '') : '',
         interfaceId,
         attempts: 0,
         createdAt: new Date().toISOString(),
       });
       this.publish();
     }
-    if (direct && parsed.number) {
+    if (direct && isQuery) {
+      if (!duplicate && allowAutomaticResponses) this.respondToQuery(local, parsed.sender, parsed.text, parsed.number, interfaceId);
+      return;
+    }
+    if (direct && parsed.number && allowAutomaticResponses) {
       const ack = encodeKissMessage(
         local,
         parsed.sender,
@@ -247,6 +290,42 @@ export class MessageService {
     }
   }
 
+  private respondToQuery(local: string, sender: string, text: string, number: string | undefined, interfaceId: string): void {
+    const query = text.trim().toUpperCase().split(/\s+/)[0];
+    if (!this.querySettings || !['?APRS', '?APRS?', '?APRSP', '?VER', '?APRSV'].includes(query)) return;
+    let settings: QuerySettings;
+    let frame: Uint8Array;
+    let response: string;
+    try {
+      settings = this.querySettings(sender);
+      if (query === '?APRSP') {
+        frame = settings.position();
+        // The frame is an ordinary beacon, but its payload is shown in the conversation.
+        const position = new KissFrameDecoder().consume(frame)[0];
+        if (!position) return;
+        response = position.slice(position.indexOf(':') + 1);
+      } else {
+        response = query === '?APRS' || query === '?APRS?' ? 'Queries: ?APRS ?APRSP ?VER' : `APRSBox Lite ${settings.version}`;
+        frame = encodeKissMessage(local, sender, response, settings.path);
+      }
+    } catch { return; }
+    const message: AprsMessage = {
+      id: crypto.randomUUID(), sender: local, recipient: sender, text: response,
+      direction: 'tx', status: 'pending', path: settings.path, interfaceId, attempts: 0,
+      createdAt: new Date().toISOString(),
+      ...(query === '?APRSP' ? { kind: 'position-response' as const } : {}),
+    };
+    this.messages.push(message);
+    this.publish();
+    if (!number) { void this.attempt(message, frame); return; }
+    const timer = setTimeout(() => {
+      this.timers.delete(message.id);
+      void this.attempt(message, frame);
+    }, 5_000);
+    timer.unref();
+    this.timers.set(message.id, timer);
+  }
+
   async retry(id: string): Promise<void> {
     const message = this.messages.find(
       (item) => item.id === id && item.direction === 'tx',
@@ -256,12 +335,9 @@ export class MessageService {
       (message.status !== 'failed' && message.status !== 'rejected')
     )
       throw new Error('Message cannot be retried.');
-    const frame = encodeKissMessage(
-      message.sender,
-      message.recipient,
-      message.text + (message.number ? `{${message.number}` : ''),
-      message.path,
-    );
+    const frame = message.kind === 'position-response'
+      ? encodeKissFrame(message.sender, message.text, message.path)
+      : encodeKissMessage(message.sender, message.recipient, message.text + (message.number ? `{${message.number}` : ''), message.path);
     message.attempts = 0;
     message.status = 'pending';
     message.error = undefined;
@@ -275,6 +351,7 @@ export class MessageService {
     this.timers.clear();
     this.acknowledgements.clear();
     this.messages = [];
+    this.unreadIds.clear();
   }
 
   private allocateNumber(recipient: string): string {
@@ -357,6 +434,7 @@ export class MessageService {
   private publish(): void {
     while (this.messages.length > MAX_MESSAGES) {
       const removed = this.messages.shift()!;
+      this.unreadIds.delete(removed.id);
       clearTimeout(this.timers.get(removed.id));
       this.timers.delete(removed.id);
     }

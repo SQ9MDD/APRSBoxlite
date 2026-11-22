@@ -10,6 +10,7 @@ import weatherIcon from '../components/icons/weather-partly-cloudy.svg';
 import messageIcon from '../components/icons/forum.svg';
 import type { TrafficMonitorFrame } from './TrafficMonitorView';
 import { filterStations, matchesStationFilter } from './stationSearch';
+import { decodeAprsPosition, unwrapAprsPacket } from '../main/aprsPosition';
 import type { StationFilter } from './stationSearch';
 export type { StationFilter } from './stationSearch';
 
@@ -71,11 +72,13 @@ export function renderStationDetails(station: Station, ownPosition: Coordinates 
   const devicePanel = device ? `<div class="station-detail-device"><h2>APRS device identification</h2><strong>${escapeHtml(device.identifiedAs)}</strong><dl class="station-detail-fields">${deviceFields.filter(([, value]) => value).map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value!)}</dd>`).join('')}</dl></div>` : '';
   const cutoff = Date.now() - 60 * 60 * 1000;
   const packets = frames.filter((frame) => {
-    const source = frame.packet.match(/^\s*([^>]+)>/);
-    return Date.parse(frame.receivedAt) > cutoff && source?.[1].trim().toUpperCase().replace(/-0$/, '') === station.callsign;
+    const packet = unwrapAprsPacket(frame.packet);
+    const source = packet?.match(/^\s*([^>]+)>/);
+    const position = station.entityType ? decodeAprsPosition(frame.packet) : undefined;
+    return Date.parse(frame.receivedAt) > cutoff && (station.entityType ? position?.entityType === station.entityType && position.callsign === station.callsign : source?.[1].trim().toUpperCase().replace(/-0$/, '') === station.callsign);
   });
   const base = station.callsign.split('-')[0];
-  const related = stations.filter((item) => item.callsign.split('-')[0] === base).sort((a, b) => a.callsign.localeCompare(b.callsign, undefined, { numeric: true }));
+  const related = station.entityType ? [] : stations.filter((item) => !item.entityType && item.callsign.split('-')[0] === base).sort((a, b) => a.callsign.localeCompare(b.callsign, undefined, { numeric: true }));
   const packetRows = packets.map((frame) => {
     const destination = frame.packet.match(/^[^>]+>([^,:]+)/)?.[1] ?? '–';
     return `<tr><td><time>${escapeHtml(new Date(frame.receivedAt).toLocaleString())}</time><small>${relativeTime(frame.receivedAt)}</small></td><td>${escapeHtml(destination)}</td><td><code>${escapeHtml(frame.packet)}</code></td></tr>`;

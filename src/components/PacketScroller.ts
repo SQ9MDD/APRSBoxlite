@@ -15,7 +15,11 @@ function parseFrame(packet: string, ownCallsign: string) {
   if (!outer) return undefined;
   const thirdParty = outer[4].startsWith('}');
   const inner = thirdParty ? parse(outer[4].slice(1).trimStart()) : undefined;
-  const callsign = (inner?.[1] ?? outer[1]).trim().toUpperCase();
+  const info = inner?.[4] ?? outer[4];
+  const object = info[0] === ';' && /^[*_]$/.test(info[10] ?? '') ? info.slice(1, 10).trim() : '';
+  const item = info[0] === ')' ? info.match(/^\)([^!_]{3,9})[!_]/)?.[1]?.trim() : '';
+  const entity = object || item;
+  const callsign = (entity || inner?.[1] || outer[1]).trim().toUpperCase();
   const path = (outer[3] ?? '')
     .split(',')
     .map((part) => part.trim())
@@ -47,7 +51,7 @@ function parseFrame(packet: string, ownCallsign: string) {
       : cleaned.length === 0
         ? '*'
         : '';
-  return { callsign, digi, marker };
+  return { callsign, digi, marker, entity: !!entity };
 }
 
 function symbolIcon(symbol: string | undefined) {
@@ -80,7 +84,7 @@ export function renderPacketRows(
     if (Date.parse(frame.receivedAt) <= cutoff) continue;
     const parsed = parseFrame(frame.packet, ownCallsign);
     if (!parsed) continue;
-    const station = byCallsign.get(parsed.callsign.replace(/-0$/, ''));
+    const station = byCallsign.get(parsed.entity ? parsed.callsign : parsed.callsign.replace(/-0$/, ''));
     const icon = symbolIcon(station?.symbol);
     const timestamp = new Date(frame.receivedAt).toLocaleTimeString();
     const attributes = station

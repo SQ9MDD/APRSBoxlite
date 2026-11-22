@@ -3,6 +3,8 @@ import type { AprsMessage } from '../types';
 import type { InterfaceSettings } from './SettingsView';
 import { parseMessageControl } from '../aprsMessageControl';
 
+const deleteIcon = new URL('../components/icons/delete-outline.svg', import.meta.url).href;
+
 function visibleMessage(message: AprsMessage): boolean {
   return message.direction !== 'rx' || !parseMessageControl(message.text);
 }
@@ -15,12 +17,16 @@ function conversationFor(message: AprsMessage): string {
       : message.sender;
 }
 
+export function isVisibleInConversation(message: AprsMessage, recipient: string): boolean {
+  return visibleMessage(message) && conversationFor(message) === recipient;
+}
+
 export function renderMessageHistory(
   messages: AprsMessage[],
   recipient: string | undefined,
 ): string {
   const items = messages.filter(
-    (message) => visibleMessage(message) && conversationFor(message) === recipient,
+    (message) => !!recipient && isVisibleInConversation(message, recipient),
   );
   if (!items.length)
     return '<p class="messages-empty">No messages in this conversation.</p>';
@@ -28,7 +34,7 @@ export function renderMessageHistory(
     .map((message) => {
       const status =
         message.direction === 'tx'
-          ? `<span class="message-status" title="${escapeHtml(message.error ?? '')}">${escapeHtml(message.status.toUpperCase())}${message.attempts ? ` · ${message.attempts}/4` : ''}</span>`
+          ? `<span class="message-status" title="${escapeHtml(message.error ?? '')}">${escapeHtml(message.status.toUpperCase())}${message.number && message.attempts ? ` · ${message.attempts}/4` : ''}</span>`
           : '';
       const retry =
         message.direction === 'tx' &&
@@ -63,6 +69,6 @@ export function renderMessagesView(
     )
     .join('');
   return {
-    html: `<div class="messages-layout"><aside class="messages-sidebar"><div class="messages-header"><strong>Conversations</strong></div><form data-message-new class="messages-new"><label>Start new conversation<input name="recipient" maxlength="9" placeholder="SP9XYZ-7" autocomplete="off" required></label><button class="outline-button" type="submit">Open</button></form><div class="messages-conversations">${conversations.map((call) => `<button type="button" data-message-conversation="${escapeHtml(call)}" class="${call === recipient ? 'is-selected' : ''}">${escapeHtml(call)}</button>`).join('')}</div></aside><section class="messages-thread"><header class="messages-header"><strong>${recipient ? escapeHtml(recipient) : 'Select a conversation'}</strong></header><div class="messages-history" data-message-history>${recipient ? renderMessageHistory(messages, recipient) : '<p class="messages-empty">Select or open a conversation.</p>'}</div><form data-message-send class="messages-composer"><label>Message <textarea name="text" rows="3" maxlength="67" placeholder="Type APRS message" ${recipient ? '' : 'disabled'} required></textarea></label><div class="messages-controls"><label>Interface<select name="interfaceId" required><option value="">Select interface</option>${options}</select></label><label>Path<input name="path" value="${escapeHtml(path)}" placeholder="WIDE2-1" maxlength="71"></label><button class="primary-button" type="submit" ${recipient ? '' : 'disabled'}>Send</button></div><small>Printable ASCII, up to 67 characters. Direct messages request an ACK.</small><p class="message-error" data-message-error role="alert"></p></form></section></div>`,
+    html: `<div class="messages-layout"><aside class="messages-sidebar"><div class="messages-header"><strong>Conversations</strong></div><form data-message-new class="messages-new"><label>Start new conversation<input name="recipient" maxlength="9" placeholder="SP9XYZ-7" autocomplete="off" required></label><button class="outline-button" type="submit">Open</button></form><div class="messages-conversations">${conversations.map((call) => `<div class="messages-conversation-row"><button type="button" data-message-conversation="${escapeHtml(call)}" class="${call === recipient ? 'is-selected' : ''}">${escapeHtml(call)}</button><button type="button" data-delete-conversation="${escapeHtml(call)}" class="messages-delete" title="Delete conversation ${escapeHtml(call)}" aria-label="Delete conversation ${escapeHtml(call)}"><img src="${deleteIcon}" alt=""></button></div>`).join('')}</div></aside><section class="messages-thread"><header class="messages-header"><strong>${recipient ? escapeHtml(recipient) : 'Select a conversation'}</strong></header><div class="messages-history" data-message-history>${recipient ? renderMessageHistory(messages, recipient) : '<p class="messages-empty">Select or open a conversation.</p>'}</div><form data-message-send class="messages-composer"><label>Message <textarea name="text" rows="3" maxlength="67" placeholder="Type APRS message" ${recipient ? '' : 'disabled'} required></textarea></label><div class="messages-controls"><label>Interface<select name="interfaceId" required><option value="">Select interface</option>${options}</select></label><label>Path<input name="path" value="${escapeHtml(path)}" placeholder="WIDE2-1" maxlength="71"></label><button class="primary-button" type="submit" ${recipient ? '' : 'disabled'}>Send</button></div><small>Printable ASCII, up to 67 characters. Direct messages request an ACK.</small><p class="message-error" data-message-error role="alert"></p></form></section></div>`,
   };
 }

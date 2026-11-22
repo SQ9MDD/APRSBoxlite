@@ -98,8 +98,8 @@ export function renderInterfaceStatusDots(
 ): string {
   return interfaces.map((item) => {
     const status = !item.enabled ? 'disabled' : statuses[item.id] ?? 'disconnected';
-    const name = item.name || (item.type === 'kiss-tcp' ? item.hostPort : item.serialDevice) || item.id;
-    const label = `${name} · ${item.type === 'kiss-tcp' ? 'KISS TCP' : item.type === 'kiss-serial' ? 'KISS Serial' : 'KISS Bluetooth LE'} · ${status}`;
+    const name = item.name || (item.type === 'kiss-tcp' ? item.hostPort : item.type === 'aprs-is' ? item.aprsIsServer : item.serialDevice) || item.id;
+    const label = `${name} · ${item.type === 'kiss-tcp' ? 'KISS TCP' : item.type === 'kiss-serial' ? 'KISS Serial' : item.type === 'aprs-is' ? 'APRS-IS' : 'KISS Bluetooth LE'} · ${status}`;
     return `<span class="topbar-interface-dot is-${status}" role="img" tabindex="0" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}"></span>`;
   }).join('');
 }

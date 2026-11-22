@@ -3,6 +3,7 @@ import { renderPacketRows } from './PacketScroller';
 import type { Station } from '../types';
 import type { TrafficMonitorFrame } from '../views/TrafficMonitorView';
 import type { Coordinates } from './LocationPicker';
+import { decodeAprsPosition } from '../main/aprsPosition';
 
 interface RightPanelProps {
   station: Station | undefined;
@@ -50,9 +51,10 @@ export function renderLastPacket(
   const inner = outer?.[2].startsWith('}')
     ? outer[2].slice(1).match(/^\s*([^>]+)>[^:]*:/)
     : undefined;
-  const callsign = (inner?.[1] ?? outer?.[1])?.trim().toUpperCase();
+  const entity = frame ? decodeAprsPosition(frame.packet) : undefined;
+  const callsign = (entity?.entityType ? entity.callsign : inner?.[1] ?? outer?.[1])?.trim().toUpperCase();
   const station = callsign
-    ? stations.find((item) => item.callsign === callsign.replace(/-0$/, ''))
+    ? stations.find((item) => item.callsign === (entity?.entityType ? callsign : callsign.replace(/-0$/, '')))
     : frame
       ? undefined
       : stations[0];
