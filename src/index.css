@@ -2865,7 +2865,19 @@ button {
 .traffic-legend-items i { width: 18px; height: 18px; flex: none; border: 2px solid var(--traffic-row-color); border-radius: 4px; background: color-mix(in srgb, var(--traffic-row-color) var(--traffic-row-opacity), transparent); }
 :root[data-theme='light'] .traffic-legend { background: #fff; color: #18334d; border-color: #cfdae5; }
 
-.general-settings { display: grid; gap: 16px; max-width: 1200px; }
+.general-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas: 'general identification' 'general backup' 'maps maps';
+  gap: 16px;
+  max-width: 1200px;
+}
+.general-card { grid-area: general; }
+.identification-card { grid-area: identification; }
+.backup-card { grid-area: backup; }
+.map-sources-card { grid-area: maps; }
+.general-card .form-grid { grid-template-columns: minmax(0, 1fr); }
+.general-settings .form-actions { flex-wrap: wrap; }
 .general-settings .configuration-form { max-width: none; }
 .general-settings h3 { margin: 0 0 16px; font-size: 16px; }
 .general-muted { color: #819bb3; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -2879,6 +2891,12 @@ button {
 :root[data-theme='light'] .general-source-table table { color: #334e67; }
 :root[data-theme='light'] .general-source-table th, :root[data-theme='light'] .general-source-table td { border-color: #cfdae5; }
 @media (max-width: 1250px) { .general-map-sources { grid-template-columns: 1fr; } }
+@media (max-width: 1050px) {
+  .general-settings {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'general' 'identification' 'backup' 'maps';
+  }
+}
 
 .ble-panel {
   display: grid;
