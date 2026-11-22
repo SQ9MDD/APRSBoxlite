@@ -97,9 +97,9 @@ export function renderInterfaceStatusDots(
   statuses: Record<string, InterfaceConnectionStatus>,
 ): string {
   return interfaces.map((item) => {
-    const status = !item.enabled ? 'disabled' : item.type === 'kiss-serial' ? 'unsupported' : statuses[item.id] ?? 'disconnected';
+    const status = !item.enabled ? 'disabled' : statuses[item.id] ?? 'disconnected';
     const name = item.name || (item.type === 'kiss-tcp' ? item.hostPort : item.serialDevice) || item.id;
-    const label = `${name} · ${item.type === 'kiss-tcp' ? 'KISS TCP' : 'KISS Serial'} · ${status === 'unsupported' ? 'not supported' : status}`;
+    const label = `${name} · ${item.type === 'kiss-tcp' ? 'KISS TCP' : 'KISS Serial'} · ${status}`;
     return `<span class="topbar-interface-dot is-${status}" role="img" tabindex="0" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}"></span>`;
   }).join('');
 }

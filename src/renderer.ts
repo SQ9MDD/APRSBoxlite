@@ -391,7 +391,7 @@ window.aprsbox.traffic.onInterfaceStatus(({ interfaceId, status }) => {
     const configured = interfaces.find((item) => item.id === interfaceId);
     if (option && configured) {
       option.disabled = status !== 'connected';
-      option.textContent = `${configured.name || configured.hostPort} · ${status}`;
+      option.textContent = `${configured.name || configured.hostPort || configured.serialDevice} · ${status}`;
     }
   }
 });

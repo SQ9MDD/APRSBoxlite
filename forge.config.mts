@@ -5,11 +5,14 @@ import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
+import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    // Keep production dependencies alongside the Vite bundles for native SerialPort.
+    ignore: (file) => !!file && !file.startsWith('/.vite') && file !== '/node_modules' && !file.startsWith('/node_modules/'),
     name: 'APRSBOX',
     icon: './assets/aprsbox',
     extraResource: ['./assets/aprsbox.png'],
@@ -22,7 +25,8 @@ const config: ForgeConfig = {
         'APRSBox Lite uses your location to set your station position.',
     },
   },
-  rebuildConfig: {},
+  // SerialPort ships N-API prebuilds for all supported platforms.
+  rebuildConfig: { ignoreModules: ['@serialport/bindings-cpp'] },
   makers: [
     new MakerZIP({}, ['darwin']),
     new MakerDMG({}, ['darwin']),
@@ -30,6 +34,7 @@ const config: ForgeConfig = {
     new MakerDeb({ options: { bin: 'APRSBOX', productName: 'APRSBOX', icon: './assets/aprsbox.png' } }),
   ],
   plugins: [
+    new AutoUnpackNativesPlugin({}),
     new VitePlugin({
       // `build` can specify multiple entry builds, which can be Main process, Preload scripts, Worker process, etc.
       // If you are familiar with Vite configuration, it will look really familiar.

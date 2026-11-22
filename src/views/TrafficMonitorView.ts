@@ -47,7 +47,7 @@ export function renderTrafficEntries(frames: TrafficMonitorFrame[], filter: stri
           })(),
         )
         .join('')
-    : `<p class="traffic-empty">${filter.trim() ? 'No matching frames.' : 'No received KISS TCP frames in the last 60 minutes.'}</p>`;
+    : `<p class="traffic-empty">${filter.trim() ? 'No matching frames.' : 'No received KISS frames in the last 60 minutes.'}</p>`;
 }
 
 export function renderTrafficMonitorView(frames: TrafficMonitorFrame[], legendOpen: boolean, filter: string): {

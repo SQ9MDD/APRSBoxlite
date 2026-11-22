@@ -13,6 +13,7 @@ import { DEFAULT_MAP_SETTINGS, validateMapSettings } from './mapSettings';
 import { MapTileCache } from './main/mapTileCache';
 import { createConfigurationBackup, readConfigurationBackup } from './main/configBackup';
 import { filterTrafficFrames, formatTrafficLog, trafficLogFilename } from './trafficLog';
+import { KissSerialRxService } from './main/kissSerialRx';
 import {
   KissTcpRxService,
   KissFrameDecoder,
@@ -88,6 +89,7 @@ const createWindow = () => {
 
 let configStorage: ConfigStorage;
 let kissTcpRxService: KissTcpRxService;
+let kissSerialRxService: KissSerialRxService;
 let messageService: MessageService;
 let messageStorage: MessageStorage | undefined;
 let beaconTimer: ReturnType<typeof setTimeout> | undefined;
@@ -286,8 +288,7 @@ app.whenReady().then(async () => {
       }
     });
   };
-  kissTcpRxService = new KissTcpRxService(
-    (frame) => {
+  const onKissFrame = (frame: TrafficFrame) => {
       const station = configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown } | undefined;
       if (typeof station?.callsign === 'string' && typeof station.ssid === 'string')
         frame.category = classifyTraffic(frame.packet, `${station.callsign}${station.ssid}`);
@@ -296,10 +297,22 @@ app.whenReady().then(async () => {
         stationStore.receive(frame.packet, frame.interfaceName);
         messageService.receive(frame.packet, frame.interfaceId);
       }
-    },
-    (interfaceId, status) =>
-      broadcast('traffic:interface-status', { interfaceId, status }),
-  );
+    };
+  const onKissStatus = (interfaceId: string, status: ConnectionStatus) =>
+    broadcast('traffic:interface-status', { interfaceId, status });
+  kissTcpRxService = new KissTcpRxService(onKissFrame, onKissStatus);
+  kissSerialRxService = new KissSerialRxService(onKissFrame, onKissStatus);
+  const configureKiss = (interfaces: InterfaceConfiguration[]) => {
+    kissTcpRxService.configure(interfaces);
+    kissSerialRxService.configure(interfaces);
+  };
+  const transmitKiss = (interfaceId: string, frame: Uint8Array) =>
+    kissSerialRxService.isConfigured(interfaceId)
+      ? kissSerialRxService.transmit(interfaceId, frame)
+      : kissTcpRxService.transmit(interfaceId, frame);
+  const kissStatuses = () => ({ ...kissTcpRxService.getStatuses(), ...kissSerialRxService.getStatuses() });
+  const kissHistory = () => [...kissTcpRxService.getHistory(), ...kissSerialRxService.getHistory()]
+    .sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt)).slice(0, 1000);
   const notifyPower = (event: 'system:suspend' | 'system:resume') => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(event);
@@ -308,6 +321,7 @@ app.whenReady().then(async () => {
   powerMonitor.on('suspend', () => notifyPower('system:suspend'));
   powerMonitor.on('resume', () => {
     kissTcpRxService.reconnectAfterResume();
+    kissSerialRxService.reconnectAfterResume();
     notifyPower('system:resume');
   });
   messageService = new MessageService(
@@ -322,7 +336,7 @@ app.whenReady().then(async () => {
         throw new Error('Configure and save My Station first.');
       return `${station.callsign}${station.ssid}`;
     },
-    (interfaceId, frame) => kissTcpRxService.transmit(interfaceId, frame),
+    transmitKiss,
     (messages) => {
       broadcast('messages:changed', messages);
       persistMessages(messages);
@@ -334,7 +348,7 @@ app.whenReady().then(async () => {
   const storedInterfaces = configStorage.getConfiguration().interfaces;
   if (Array.isArray(storedInterfaces)) {
     try {
-      kissTcpRxService.configure(validateInterfaces(storedInterfaces));
+      configureKiss(validateInterfaces(storedInterfaces));
     } catch {
       // Invalid saved interface configuration must not prevent the app from opening.
     }
@@ -356,20 +370,20 @@ app.whenReady().then(async () => {
     const interfaces = validateInterfaces(
       configStorage.getConfiguration().interfaces ?? [],
     );
-    const statuses = kissTcpRxService.getStatuses();
+    const statuses = kissStatuses();
     const eligible = interfaces.filter(
-      (item) => item.type === 'kiss-tcp' && item.enabled && !item.txBlocked,
+      (item) => item.enabled && !item.txBlocked,
     );
     const connected = eligible.filter((item) => statuses[item.id] === 'connected');
     const interfaceId = station.beaconInterfaceId ||
       (connected.length === 1 ? connected[0].id : '');
     if (!interfaceId) throw new Error('Choose a connected transmit interface.');
     const frame = encodeBeacon(station);
-    await kissTcpRxService.transmit(interfaceId, frame);
+    await transmitKiss(interfaceId, frame);
     const packet = new KissFrameDecoder().consume(frame)[0];
     if (packet) {
       const source = eligible.find((item) => item.id === interfaceId);
-      stationStore.receive(packet, source?.name || source?.hostPort);
+      stationStore.receive(packet, source?.name || source?.hostPort || source?.serialDevice);
     }
   };
   const scheduleBeacon = (retry = false) => {
@@ -453,7 +467,7 @@ app.whenReady().then(async () => {
     const validatedInterfaces = validateInterfaces(interfaces);
     return updateConfig({ interfaces: validatedInterfaces }).then(
       (location) => {
-        kissTcpRxService.configure(validatedInterfaces);
+        configureKiss(validatedInterfaces);
         return location;
       },
     );
@@ -482,14 +496,14 @@ app.whenReady().then(async () => {
     const write = configWrites.then(() => configStorage.save(restored));
     configWrites = write.then(() => undefined, () => undefined);
     await write;
-    kissTcpRxService.configure(interfaces);
+    configureKiss(interfaces);
     scheduleBeacon();
     return true;
   });
-  ipcMain.handle('traffic:get-recent', () => kissTcpRxService.getHistory());
+  ipcMain.handle('traffic:get-recent', () => kissHistory());
   ipcMain.handle('traffic:save-log', async (_event, filter: unknown) => {
     if (typeof filter !== 'string' || filter.length > 1024) throw new Error('Invalid traffic filter.');
-    const snapshot = filterTrafficFrames(kissTcpRxService.getHistory(), filter);
+    const snapshot = filterTrafficFrames(kissHistory(), filter);
     const station = configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown } | undefined;
     const callsign = typeof station?.callsign === 'string' ? station.callsign : '';
     const ssid = callsign.trim() && typeof station?.ssid === 'string' ? station.ssid : '';
@@ -528,7 +542,7 @@ app.whenReady().then(async () => {
     return messageService.retry(id);
   });
   ipcMain.handle('traffic:get-interface-statuses', () =>
-    kissTcpRxService.getStatuses(),
+    kissStatuses(),
   );
   createWindow();
 
@@ -559,6 +573,7 @@ app.on('before-quit', (event) => {
   quitting = true;
   clearTimeout(beaconTimer);
   kissTcpRxService?.stop();
+  kissSerialRxService?.stop();
   stationStore.dispose();
   messageService?.dispose();
   void (messageStorage?.flush() ?? Promise.resolve()).catch((error) => {

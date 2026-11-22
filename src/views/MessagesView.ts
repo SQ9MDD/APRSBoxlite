@@ -52,12 +52,12 @@ export function renderMessagesView(
   if (recipient && !conversations.includes(recipient))
     conversations.unshift(recipient);
   const eligible = interfaces.filter(
-    (item) => item.enabled && !item.txBlocked && item.type === 'kiss-tcp',
+    (item) => item.enabled && !item.txBlocked,
   );
   const options = eligible
     .map(
       (item) =>
-        `<option value="${escapeHtml(item.id)}" ${statuses[item.id] === 'connected' ? '' : 'disabled'}>${escapeHtml(item.name || item.hostPort)} · ${escapeHtml(statuses[item.id] ?? 'disconnected')}</option>`,
+        `<option value="${escapeHtml(item.id)}" ${statuses[item.id] === 'connected' ? '' : 'disabled'}>${escapeHtml(item.name || item.hostPort || item.serialDevice)} · ${escapeHtml(statuses[item.id] ?? 'disconnected')}</option>`,
     )
     .join('');
   return {
