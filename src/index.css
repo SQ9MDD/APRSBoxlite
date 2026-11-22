@@ -1562,7 +1562,9 @@ button {
 }
 
 .sidebar-footer {
-  display: none;
+  display: grid;
+  gap: 4px;
+  text-align: center;
 }
 
 .topbar {
