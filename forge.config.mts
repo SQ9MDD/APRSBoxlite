@@ -26,8 +26,8 @@ const config: ForgeConfig = {
   makers: [
     new MakerZIP({}, ['darwin']),
     new MakerDMG({}, ['darwin']),
-    new MakerRpm({}),
-    new MakerDeb({}),
+    new MakerRpm({ options: { bin: 'APRSBOX', productName: 'APRSBOX', icon: './assets/aprsbox.png' } }),
+    new MakerDeb({ options: { bin: 'APRSBOX', productName: 'APRSBOX', icon: './assets/aprsbox.png' } }),
   ],
   plugins: [
     new VitePlugin({

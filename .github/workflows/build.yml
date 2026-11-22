@@ -50,20 +50,28 @@ jobs:
           codesign --force --deep --sign - 'out/APRSBOX-darwin-arm64/APRSBOX.app'
           codesign --verify --deep --strict --verbose=2 'out/APRSBOX-darwin-arm64/APRSBOX.app'
 
-      - name: Create macOS DMG and ZIP
+      - name: Create macOS application ZIP
         if: runner.os == 'macOS'
-        run: npm run make -- --from-package --platform=darwin --arch=arm64
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          mkdir -p dist staging
+          mv 'out/APRSBOX-darwin-arm64/APRSBOX.app' 'staging/APRSBox Lite.app'
+          ditto -c -k --sequesterRsrc --keepParent 'staging/APRSBox Lite.app' "dist/APRSBoxLite-${version}-macOS-arm64.zip"
+          mkdir -p verify-macos
+          ditto -x -k "dist/APRSBoxLite-${version}-macOS-arm64.zip" verify-macos
+          codesign --verify --deep --strict --verbose=2 'verify-macos/APRSBox Lite.app'
 
       - name: Build Linux packages with Electron Forge
         if: runner.os == 'Linux'
         run: npm run make
 
-      - name: Verify macOS packages
+      - name: Verify macOS application ZIP
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          find out/make -type f -name '*.dmg' -print -quit | grep -q .
-          find out/make -type f -name '*.zip' -print -quit | grep -q .
+          test -d 'staging/APRSBox Lite.app'
+          find dist -type f -name 'APRSBoxLite-*-macOS-arm64.zip' -print -quit | grep -q .
 
       - name: Verify Linux packages
         if: runner.os == 'Linux'
@@ -82,18 +90,16 @@ jobs:
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path 'out/APRSBOX-win32-x64/*' -DestinationPath "dist/APRSBoxLite-$version-win-x64.zip"
+          $source = (Resolve-Path 'out/APRSBOX-win32-x64').Path
+          $destination = Join-Path (Resolve-Path 'dist').Path "APRSBoxLite-$version-win-x64.zip"
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($source, $destination, [System.IO.Compression.CompressionLevel]::Optimal, $false)
 
-      - name: Upload installers
-        if: runner.os != 'Windows'
+      - name: Upload macOS application ZIP
+        if: runner.os == 'macOS'
         uses: actions/upload-artifact@v7
         with:
-          name: aprsbox-lite-${{ matrix.artifact }}
-          path: |
-            out/make/**/*.dmg
-            out/make/**/*.zip
-            out/make/**/*.deb
-            out/make/**/*.rpm
+          path: dist/APRSBoxLite-*-macOS-arm64.zip
+          archive: false
           if-no-files-found: error
           retention-days: 14
 
@@ -101,7 +107,25 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
-          name: aprsbox-lite-${{ matrix.artifact }}
           path: dist/APRSBoxLite-*-win-x64.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Linux DEB package
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/make/**/*.deb
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Linux RPM package
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/make/**/*.rpm
+          archive: false
           if-no-files-found: error
           retention-days: 14
