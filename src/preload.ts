@@ -68,6 +68,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
     clearMapCache: (id: string): Promise<void> => ipcRenderer.invoke('map:clear-cache', id),
     saveMapSettings: (settings: import('./mapSettings').MapSettings) => ipcRenderer.invoke('config:save-map-settings', settings),
     saveMessageInterface: (id: string) => ipcRenderer.invoke('config:save-message-interface', id),
+    saveMessagePath: (recipient: string, path: string) => ipcRenderer.invoke('config:save-message-path', recipient, path),
     exportBackup: (): Promise<boolean> => ipcRenderer.invoke('config:export-backup'),
     importBackup: (): Promise<boolean> => ipcRenderer.invoke('config:import-backup'),
     saveScrollerVisibility: (visible: boolean) => ipcRenderer.invoke('config:save-scroller-visibility', visible),

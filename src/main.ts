@@ -553,6 +553,25 @@ app.whenReady().then(async () => {
     if (id && !validateInterfaces(configStorage.getConfiguration().interfaces ?? []).some((item) => item.id === id && item.enabled && !item.txBlocked)) throw new Error('Message interface is unavailable.');
     return updateConfig({ messageInterfaceId: id });
   });
+  ipcMain.handle('config:save-message-path', (_event, recipient: unknown, path: unknown) => {
+    if (typeof recipient !== 'string' || !/^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/.test(recipient) || typeof path !== 'string' || path.length > 71) throw new Error('Invalid conversation path.');
+    const write = configWrites.then(async () => {
+      const stored = configStorage.getConfiguration().messagePaths;
+      const paths: Record<string, string> = {};
+      if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+        for (const [key, value] of Object.entries(stored)) {
+          if (/^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/.test(key) && typeof value === 'string' && value.length <= 71) paths[key] = value;
+        }
+      }
+      if (path) {
+        if (!Object.hasOwn(paths, recipient) && Object.keys(paths).length >= 1000) throw new Error('Too many saved conversation paths.');
+        paths[recipient] = path;
+      } else delete paths[recipient];
+      return configStorage.save({ ...configStorage.getConfiguration(), messagePaths: paths });
+    });
+    configWrites = write.then(() => undefined, () => undefined);
+    return write;
+  });
   ipcMain.handle('config:export-backup', async () => {
     const result = await dialog.showSaveDialog({ title: 'Export configuration backup', defaultPath: 'APRSBoxLite-config-backup.json', filters: [{ name: 'JSON', extensions: ['json'] }] });
     if (result.canceled || !result.filePath) return false;

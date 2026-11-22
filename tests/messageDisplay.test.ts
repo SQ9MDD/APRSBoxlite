@@ -24,3 +24,10 @@ test('keeps the chosen interface selected while disconnected', () => {
   assert.match(html, /value="ble" selected disabled/);
   assert.doesNotMatch(html, /value="tcp" selected/);
 });
+
+test('renders the path for the active conversation safely', () => {
+  const html = renderMessagesView([], 'SP5ABC', [], {}, '', 'WIDE1-1,WIDE2-1').html;
+  assert.match(html, /name="path" value="WIDE1-1,WIDE2-1"/);
+  const escaped = renderMessagesView([], 'SP5ABC', [], {}, '', '" onfocus="bad').html;
+  assert.match(escaped, /value="&quot; onfocus=&quot;bad"/);
+});

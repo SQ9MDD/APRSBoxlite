@@ -52,6 +52,9 @@ const stationsViewState: StationsViewState = { filter: 'all', sort: 'lastHeard',
 let messageRecipient: string | undefined;
 let messageInterfaceId = '';
 let messageInterfaceChanged = false;
+let messagePaths: Record<string, string> = {};
+const messagePathTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const modifiedMessagePaths = new Set<string>();
 let messages: AprsMessage[] = [];
 let liveStations: Station[] = [];
 let updateStationMarkers: ((stations: Station[]) => void) | undefined;
@@ -362,6 +365,11 @@ async function loadConfiguration(): Promise<void> {
     applyStoredStationConfiguration(configuration);
     applyStoredInterfaces(configuration);
     if (!messageInterfaceChanged && typeof configuration.messageInterfaceId === 'string') messageInterfaceId = configuration.messageInterfaceId;
+    if (configuration.messagePaths && typeof configuration.messagePaths === 'object' && !Array.isArray(configuration.messagePaths)) {
+      for (const [recipient, path] of Object.entries(configuration.messagePaths)) {
+        if (!modifiedMessagePaths.has(recipient) && /^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/.test(recipient) && typeof path === 'string' && path.length <= 71) messagePaths[recipient] = path;
+      }
+    }
     const viewport = configuration.mapViewport as
       | Partial<MapViewport>
       | undefined;
@@ -552,6 +560,7 @@ const pageRenderers: Record<
       interfaces,
       interfaceStatuses,
       messageInterfaceId,
+      messageRecipient ? messagePaths[messageRecipient] ?? '' : '',
     ),
   settings: () =>
     renderSettingsView(
@@ -982,6 +991,7 @@ function updateMessages(next: AprsMessage[]): void {
       interfaces,
       interfaceStatuses,
       messageInterfaceId,
+      messageRecipient ? messagePaths[messageRecipient] ?? '' : '',
     ).html;
     list.innerHTML =
       template.content.querySelector('.messages-conversations')?.innerHTML ??
@@ -1007,6 +1017,25 @@ function renderApp(): void {
     document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
   appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView)}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, activeSettingsSection, `${stationSettings.callsign}${stationSettings.ssid}`, mapMaskOpacity[resolvedTheme], detailCallsign ? '' : renderStationFilters(liveStations, stationsViewState.filter), interfaces, interfaceStatuses, activeView === 'traffic' ? renderTrafficFilter(trafficFrames, trafficFilter) : '', activeView === 'stations' && !detailCallsign ? renderStationSearch(liveStations, stationsViewState) : '')}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}`;
   updateBleDevices();
+  const pathInput = appRoot.querySelector<HTMLInputElement>('[data-message-send] input[name="path"]');
+  const pathRecipient = messageRecipient;
+  if (pathInput && pathRecipient) {
+    const savePath = () => {
+      clearTimeout(messagePathTimers.get(pathRecipient));
+      messagePathTimers.delete(pathRecipient);
+      void window.aprsbox.config.saveMessagePath(pathRecipient, messagePaths[pathRecipient] ?? '').catch((error) => {
+        const output = appRoot.querySelector<HTMLElement>('[data-message-error]');
+        if (output && messageRecipient === pathRecipient) output.textContent = `Could not save path: ${String(error)}`;
+      });
+    };
+    pathInput.addEventListener('input', () => {
+      messagePaths[pathRecipient] = pathInput.value;
+      modifiedMessagePaths.add(pathRecipient);
+      clearTimeout(messagePathTimers.get(pathRecipient));
+      messagePathTimers.set(pathRecipient, setTimeout(savePath, 500));
+    });
+    pathInput.addEventListener('change', savePath);
+  }
   appRoot.querySelector<HTMLSelectElement>('[data-message-send] select[name="interfaceId"]')?.addEventListener('change', (event) => {
     messageInterfaceId = (event.currentTarget as HTMLSelectElement).value;
     messageInterfaceChanged = true;
