@@ -40,9 +40,37 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build installers with Electron Forge
-        if: runner.os != 'Windows'
+      - name: Package macOS ARM64 application
+        if: runner.os == 'macOS'
+        run: npm run package -- --platform=darwin --arch=arm64
+
+      - name: Sign and verify macOS application
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --deep --sign - 'out/APRSBOX-darwin-arm64/APRSBOX.app'
+          codesign --verify --deep --strict --verbose=2 'out/APRSBOX-darwin-arm64/APRSBOX.app'
+
+      - name: Create macOS DMG and ZIP
+        if: runner.os == 'macOS'
+        run: npm run make -- --from-package --platform=darwin --arch=arm64
+
+      - name: Build Linux packages with Electron Forge
+        if: runner.os == 'Linux'
         run: npm run make
+
+      - name: Verify macOS packages
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          find out/make -type f -name '*.dmg' -print -quit | grep -q .
+          find out/make -type f -name '*.zip' -print -quit | grep -q .
+
+      - name: Verify Linux packages
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          find out/make -type f -name '*.deb' -print -quit | grep -q .
+          find out/make -type f -name '*.rpm' -print -quit | grep -q .
 
       - name: Package Windows application with Electron Forge
         if: runner.os == 'Windows'
