@@ -1,10 +1,13 @@
 import type { Station } from '../types';
 
-export type StationFilter = 'all' | 'direct' | 'mobile' | 'fixed' | 'weather';
+export type StationFilter = 'all' | 'direct' | 'mobile' | 'fixed' | 'object' | 'weather';
 
 export function matchesStationFilter(station: Station, filter: StationFilter): boolean {
   if (filter === 'all') return true;
-  if (filter === 'direct') return station.path !== undefined && !station.path.includes('*');
+  const object = station.kind === 'object' || station.entityType !== undefined;
+  if (filter === 'object') return object;
+  if (object) return false;
+  if (filter === 'direct') return station.directHeardAt !== undefined;
   if (filter === 'fixed') return station.kind !== 'mobile' && station.kind !== 'weather';
   return station.kind === filter;
 }

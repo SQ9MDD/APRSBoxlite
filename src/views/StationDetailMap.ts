@@ -3,6 +3,7 @@ import type { Station } from '../types';
 import type { MapSource } from '../mapSettings';
 import { mapTileUrl } from '../mapSettings';
 import { escapeHtml } from '../components/escapeHtml';
+import { createStationTrack } from './StationTrack';
 
 const symbols = import.meta.glob('../components/icons/aprs-symbols/*.png', {
   eager: true, query: '?url', import: 'default',
@@ -35,11 +36,12 @@ export function mountStationDetailMap(element: HTMLElement, station: Station, so
     return L.divIcon({ className: 'aprs-marker-wrapper', html: content, iconSize: [28, 28], iconAnchor: [14, 14] });
   };
   const marker = L.marker([station.latitude, station.longitude], { icon: icon(station), title: station.callsign }).addTo(map);
-  const track = L.polyline([], { color: '#3388ff', weight: 3, opacity: 0.8 }).addTo(map);
+  const track = L.layerGroup().addTo(map);
   const update = (value: Station) => {
     marker.setLatLng([value.latitude, value.longitude]);
     marker.setIcon(icon(value));
-    track.setLatLngs(value.track.map((point) => [point.latitude, point.longitude]));
+    track.clearLayers();
+    createStationTrack(value).addTo(track);
   };
   update(station);
   requestAnimationFrame(() => map.invalidateSize({ pan: false }));

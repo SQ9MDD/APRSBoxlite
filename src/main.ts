@@ -347,7 +347,7 @@ app.whenReady().then(async () => {
         frame.category = classifyTraffic(frame.packet, `${station.callsign}${station.ssid}`);
       broadcast('traffic:received', frame);
       if (frame.direction === 'rx') {
-        stationStore.receive(frame.packet, frame.interfaceName);
+        stationStore.receive(frame.packet, frame.interfaceName, frame);
         if (frame.source === 'kiss') aprsIsRxService.forwardRf(frame);
         messageService.receive(frame.packet, frame.interfaceId, frame.source !== 'aprs-is' || aprsIsRxService.canTransmit(frame.interfaceId));
       }

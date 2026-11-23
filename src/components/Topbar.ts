@@ -20,6 +20,10 @@ import saveIcon from './icons/content-save-outline.svg';
 import generalSettingsIcon from './icons/cog.svg';
 import stationSettingsIcon from './icons/antenna.svg';
 import interfacesSettingsIcon from './icons/radio-handheld.svg';
+import tcpInterfaceIcon from './icons/ethernet.svg?raw';
+import serialInterfaceIcon from './icons/serial-port.svg?raw';
+import bluetoothInterfaceIcon from './icons/bluetooth.svg?raw';
+import internetInterfaceIcon from './icons/web.svg?raw';
 import type { AppView } from '../types';
 import type { InterfaceSettings, InterfaceConnectionStatus } from '../views/SettingsView';
 import { escapeHtml } from './escapeHtml';
@@ -92,15 +96,24 @@ const settingsControls: Array<{
   { id: 'interfaces', label: 'Interfaces', icon: interfacesSettingsIcon },
 ];
 
-export function renderInterfaceStatusDots(
+const interfacePresentation: Record<InterfaceSettings['type'], { icon: string; label: string }> = {
+  'kiss-tcp': { icon: tcpInterfaceIcon, label: 'KISS TCP' },
+  'kiss-serial': { icon: serialInterfaceIcon, label: 'KISS Serial' },
+  'kiss-ble': { icon: bluetoothInterfaceIcon, label: 'KISS Bluetooth LE' },
+  'aprs-is': { icon: internetInterfaceIcon, label: 'APRS-IS' },
+};
+
+export function renderInterfaceStatusIcons(
   interfaces: InterfaceSettings[],
   statuses: Record<string, InterfaceConnectionStatus>,
 ): string {
   return interfaces.map((item) => {
     const status = !item.enabled ? 'disabled' : statuses[item.id] ?? 'disconnected';
-    const name = item.name || (item.type === 'kiss-tcp' ? item.hostPort : item.type === 'aprs-is' ? item.aprsIsServer : item.serialDevice) || item.id;
-    const label = `${name} · ${item.type === 'kiss-tcp' ? 'KISS TCP' : item.type === 'kiss-serial' ? 'KISS Serial' : item.type === 'aprs-is' ? 'APRS-IS' : 'KISS Bluetooth LE'} · ${status}`;
-    return `<span class="topbar-interface-dot is-${status}" role="img" tabindex="0" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}"></span>`;
+    const name = item.name || (item.type === 'kiss-tcp' ? item.hostPort : item.type === 'aprs-is' ? item.aprsIsServer : item.type === 'kiss-ble' ? item.bleDeviceName : item.serialDevice) || item.id;
+    const presentation = interfacePresentation[item.type];
+    const label = `${name} · ${presentation.label} · ${status}`;
+    const icon = presentation.icon.replace('<svg ', '<svg aria-hidden="true" focusable="false" ');
+    return `<span class="topbar-interface-status is-${status}" role="img" tabindex="0" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${icon}</span>`;
   }).join('');
 }
 
@@ -138,5 +151,5 @@ export function createTopbar(
     view === 'settings'
       ? `<div class="settings-manipulators" aria-label="Settings sections">${settingsControls.map((control) => `<button class="map-tool ${settingsSection === control.id ? 'is-active' : ''}" data-settings-section="${control.id}" type="button" aria-pressed="${settingsSection === control.id}" aria-label="${control.label}" title="${control.label}"><img src="${control.icon}" alt="" /></button>`).join('')}</div>`
       : '';
-  return `<header class="topbar">${mapToolbar}${settingsToolbar}${view === 'stations' ? `<div class="stations-filters" aria-label="Station filters">${stationFilters}</div><div class="stations-search-container">${stationSearch}</div>` : ''}${view === 'traffic' ? `<button class="map-tool" data-action="traffic-legend" type="button" title="Traffic colors" aria-label="Traffic colors" aria-haspopup="dialog"><img src="${paletteIcon}" alt=""></button><button class="map-tool" data-action="save-traffic-log" type="button" title="Save traffic log" aria-label="Save traffic log"><img src="${saveIcon}" alt=""></button>${trafficFilter}` : ''}<div class="topbar-account"><span class="topbar-callsign">${escapeHtml(stationLabel)}</span><span class="topbar-interfaces" aria-label="Interface status">${renderInterfaceStatusDots(interfaces, statuses)}</span><button class="theme-toggle" data-action="send-beacon" type="button" aria-label="Send beacon" title="Send beacon"><img src="${beaconIcon}" alt="" /></button><div class="theme-control"><button class="theme-toggle" data-action="cycle-theme" type="button" aria-label="Change color theme (current: ${themeMode})" title="Theme: ${themeMode}"><img src="${themeIcons[themeMode]}" alt="" /></button></div></div></header>`;
+  return `<header class="topbar">${mapToolbar}${settingsToolbar}${view === 'stations' ? `<div class="stations-filters" aria-label="Station filters">${stationFilters}</div><div class="stations-search-container">${stationSearch}</div>` : ''}${view === 'traffic' ? `<button class="map-tool" data-action="traffic-legend" type="button" title="Traffic colors" aria-label="Traffic colors" aria-haspopup="dialog"><img src="${paletteIcon}" alt=""></button><button class="map-tool" data-action="save-traffic-log" type="button" title="Save traffic log" aria-label="Save traffic log"><img src="${saveIcon}" alt=""></button>${trafficFilter}` : ''}<div class="topbar-account"><span class="topbar-callsign">${escapeHtml(stationLabel.replace(/-0$/, ''))}</span><span class="topbar-interfaces" aria-label="Interface status">${renderInterfaceStatusIcons(interfaces, statuses)}</span><button class="theme-toggle" data-action="send-beacon" type="button" aria-label="Send beacon" title="Send beacon"><img src="${beaconIcon}" alt="" /></button><div class="theme-control"><button class="theme-toggle" data-action="cycle-theme" type="button" aria-label="Change color theme (current: ${themeMode})" title="Theme: ${themeMode}"><img src="${themeIcons[themeMode]}" alt="" /></button></div></div></header>`;
 }

@@ -69,6 +69,7 @@ export interface Station {
   latitude: number;
   longitude: number;
   lastHeard: string;
+  directHeardAt?: number;
   positionReceivedAt?: string;
   comment: string;
   course?: string;

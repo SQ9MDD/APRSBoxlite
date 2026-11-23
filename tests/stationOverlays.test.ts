@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import test, { mock } from 'node:test';
 import bundledTocalls from '../src/data/tocalls.json' with { type: 'json' };
+import type { TrafficFrame } from '../src/main/kissTcpRx.ts';
 
 registerHooks({
   resolve(specifier, context, next) {
@@ -18,6 +19,51 @@ registerHooks({
 const { StationStore, STATION_AGE_MS, decodePhg } =
   await import('../src/main/stationStore.ts');
 const { replaceTocallDatabase } = await import('../src/main/tocalls.ts');
+
+test('marks only locally received RF station packets as directly heard', () => {
+  const position = '!5218.37N/02104.87E>Test';
+  const cases: Array<[string, Pick<TrafficFrame, 'source' | 'direction'> | undefined, boolean]> = [
+    [`SP8ABC>APRS:${position}`, { source: 'kiss', direction: 'rx' }, true],
+    [`SP8ABC>APRS,WIDE1-1,WIDE2-1:${position}`, { source: 'kiss', direction: 'rx' }, true],
+    [`SP8ABC>APRS,SR8DIG*,WIDE2-1:${position}`, { source: 'kiss', direction: 'rx' }, false],
+    [`SP8ABC>APRS:${position}`, { source: 'aprs-is', direction: 'rx' }, false],
+    [`SP8ABC>APRS:${position}`, { source: 'kiss', direction: 'tx' }, false],
+    [`SP8ABC>APRS:${position}`, undefined, false],
+    [`SR8GAT>APRS:}SP8ABC>APRS:${position}`, { source: 'kiss', direction: 'rx' }, false],
+    ['SP8ABC>APRS:;LOCALOBJ *010203z5218.37N/02104.87E>Object', { source: 'kiss', direction: 'rx' }, false],
+    ['SP8ABC>APRS:)LOCALITEM!5218.37N/02104.87E>Item', { source: 'kiss', direction: 'rx' }, false],
+  ];
+  for (const [packet, reception, expected] of cases) {
+    const store = new StationStore(() => undefined);
+    try {
+      store.receive(packet, 'Test interface', reception);
+      const [station] = store.snapshot();
+      assert.ok(station, packet);
+      assert.equal(station.directHeardAt !== undefined, expected, packet);
+    } finally { store.dispose(); }
+  }
+});
+
+test('keeps direct reception for one hour despite later relayed or internet packets', () => {
+  mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  const store = new StationStore(() => undefined);
+  const rf = { source: 'kiss', direction: 'rx' } as const;
+  try {
+    store.receive('SP8ABC>APRS:!5218.37N/02104.87E>Direct', 'VHF', rf);
+    mock.timers.tick(1000);
+    store.receive('SP8ABC>APRS,SR8DIG*:!5218.37N/02104.87E>Relayed', 'VHF', rf);
+    mock.timers.tick(1000);
+    store.receive('SP8ABC>APRS:>Internet status', 'Internet', { source: 'aprs-is', direction: 'rx' });
+    assert.equal(store.snapshot()[0].directHeardAt, 1000);
+    mock.timers.tick(STATION_AGE_MS - 2000);
+    assert.equal(store.snapshot().length, 1);
+    assert.equal(store.snapshot()[0].directHeardAt, undefined);
+    store.receive('SP8ABC>APRS:>Direct status', 'VHF', rf);
+    assert.equal(store.snapshot()[0].directHeardAt, Date.now());
+    mock.timers.tick(1000);
+    assert.equal(store.snapshot().length, 0);
+  } finally { store.dispose(); mock.timers.reset(); }
+});
 
 test('decodes APRSBox PHG range and rejects invalid PHG', () => {
   const phg = decodePhg('PHG5130 Digipeater');

@@ -372,6 +372,9 @@ button {
   background: #f4f8fcef;
   color: #172b3c;
 }
+.aprs-map.map-station-labels-hidden .marker-label {
+  display: none;
+}
 .leaflet-tooltip {
   border: 1px solid #3d5b78;
   border-radius: 6px;
@@ -1651,20 +1654,32 @@ button {
   max-width: 160px;
   overflow-x: auto;
 }
-.topbar-interface-dot {
+.topbar-interface-status {
   display: inline-block;
   flex: none;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #ef6666;
+  width: 24px;
+  height: 24px;
+  padding: 2px;
+  border-radius: 4px;
+  color: #ef6666;
   cursor: help;
 }
-.topbar-interface-dot.is-connected { background: #4bd18c; }
-.topbar-interface-dot.is-connecting { background: #e7b44b; }
-.topbar-interface-dot.is-disabled,
-.topbar-interface-dot.is-unsupported { background: #8796a6; }
-.topbar-interface-dot:focus-visible { outline: 2px solid #70b8ff; outline-offset: 3px; }
+.topbar-interface-status svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+.topbar-interface-status.is-connected { color: #4bd18c; }
+.topbar-interface-status.is-connecting { color: #e7b44b; }
+.topbar-interface-status.is-disabled,
+.topbar-interface-status.is-unsupported { color: #8796a6; }
+.topbar-interface-status:focus-visible { outline: 2px solid #70b8ff; outline-offset: -1px; }
+:root[data-theme='light'] .topbar-interface-status { color: #bb3030; }
+:root[data-theme='light'] .topbar-interface-status.is-connected { color: #16784a; }
+:root[data-theme='light'] .topbar-interface-status.is-connecting { color: #926300; }
+:root[data-theme='light'] .topbar-interface-status.is-disabled,
+:root[data-theme='light'] .topbar-interface-status.is-unsupported { color: #67788a; }
 
 .theme-toggle {
   display: grid;
@@ -2613,6 +2628,35 @@ button {
 .messages-conversations button.is-selected {
   background: #15304c;
 }
+.messages-conversations [data-message-conversation] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.messages-conversation-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.messages-conversations button.has-unread {
+  color: #d9b565;
+  font-weight: 700;
+  box-shadow: inset 3px 0 currentColor;
+}
+.messages-unread-count {
+  flex: none;
+  min-width: 20px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #d9b565;
+  color: #0a1725;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
 .messages-history {
   display: flex;
   flex-direction: column;
@@ -2710,6 +2754,13 @@ button {
 :root[data-theme='light'] .messages-conversations button.is-selected {
   background: #dceaf5;
 }
+:root[data-theme='light'] .messages-conversations button.has-unread {
+  color: #8f6b1d;
+}
+:root[data-theme='light'] .messages-unread-count {
+  background: #8f6b1d;
+  color: #fff;
+}
 :root[data-theme='light'] .messages-conversations,
 :root[data-theme='light'] .messages-history {
   scrollbar-color: #7ea9ce #e2edf7;
@@ -2787,6 +2838,8 @@ button {
 .stations-filter { display: flex; align-items: center; gap: 6px; height: 36px; min-width: 58px; padding: 6px 9px; border: 1px solid #294966; border-radius: 7px; color: #c8daec; background: #11243a; cursor: pointer; }
 .stations-filter:hover, .stations-filter.is-active { border-color: #4b9cdb; background: #183b5b; }
 .stations-filter img { width: 20px; height: 20px; filter: invert(86%) sepia(18%) saturate(520%) hue-rotate(171deg) brightness(94%) contrast(90%); }
+.stations-filter-caption { white-space: nowrap; font-size: 12px; }
+@media (max-width: 1350px) { .stations-filter-caption { display: none; } }
 .stations-table-wrap { flex: 1; min-width: 0; min-height: 0; overflow: auto; border: 1px solid #274560; border-radius: 9px; background: #0e1d2e; scrollbar-color: #466985 #102338; }
 .stations-table { width: 100%; min-width: 1050px; border-collapse: collapse; color: #a7bbce; font-size: 12px; text-align: left; }
 .stations-table th { position: sticky; top: 0; z-index: 1; padding: 11px 12px; color: #90aac2; background: #11243a; white-space: nowrap; }

@@ -16,7 +16,7 @@ import type {
   MountedLocationPicker,
 } from './components/LocationPicker';
 import { createSidebar } from './components/Sidebar';
-import { createTopbar, renderInterfaceStatusDots } from './components/Topbar';
+import { createTopbar, renderInterfaceStatusIcons } from './components/Topbar';
 import type { MapToolId, MapToolState, ThemeMode } from './components/Topbar';
 import { createRightPanel, renderLastPacket, renderScrollerStation } from './components/RightPanel';
 import { renderPacketRows } from './components/PacketScroller';
@@ -488,7 +488,7 @@ window.aprsbox.traffic.onInterfaceStatus(({ interfaceId, status }) => {
 
 function updateTopbarInterfaceStatuses(): void {
   const container = appRoot.querySelector<HTMLElement>('.topbar-interfaces');
-  if (container) container.innerHTML = renderInterfaceStatusDots(interfaces, interfaceStatuses);
+  if (container) container.innerHTML = renderInterfaceStatusIcons(interfaces, interfaceStatuses);
 }
 
 colorScheme.addEventListener('change', () => {
@@ -788,9 +788,14 @@ appRoot.addEventListener('click', (event) => {
     void saveMapSettings({ ...mapSettings, sources: mapSettings.sources.filter((item) => item.id !== id) });
     return;
   }
-  if (event.target.closest('[data-action="save-coverage"]')) {
-    const select = appRoot.querySelector<HTMLSelectElement>('[data-coverage-opacity]');
-    if (select) void saveMapSettings({ ...mapSettings, coverageFillOpacity: Number(select.value) });
+  if (event.target.closest('[data-action="save-general-map"]')) {
+    const coverage = appRoot.querySelector<HTMLSelectElement>('[data-coverage-opacity]');
+    const labels = appRoot.querySelector<HTMLSelectElement>('[data-station-label-hide-at-zoom]');
+    if (coverage && labels) void saveMapSettings({
+      ...mapSettings,
+      coverageFillOpacity: Number(coverage.value),
+      stationLabelHideAtZoom: Number(labels.value),
+    });
     return;
   }
   const updateTocalls = event.target.closest<HTMLButtonElement>('[data-action="update-tocalls"]');

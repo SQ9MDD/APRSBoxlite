@@ -10,11 +10,13 @@ export interface MapSource {
 }
 export interface MapSettings {
   coverageFillOpacity: number;
+  stationLabelHideAtZoom: number;
   sources: MapSource[];
   defaultSourceId: string;
 }
 export const DEFAULT_MAP_SETTINGS: MapSettings = {
   coverageFillOpacity: 5,
+  stationLabelHideAtZoom: 10,
   sources: [{ id: 'osm', name: 'OpenStreetMap', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© OpenStreetMap contributors', minZoom: 0, maxZoom: 19, enabled: true }],
   defaultSourceId: 'osm',
 };
@@ -22,6 +24,10 @@ export const DEFAULT_MAP_SETTINGS: MapSettings = {
 export function validateMapSettings(value: unknown): MapSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid map settings.');
   const data = value as Record<string, unknown>;
+  const stationLabelHideAtZoom = data.stationLabelHideAtZoom === undefined
+    ? DEFAULT_MAP_SETTINGS.stationLabelHideAtZoom
+    : data.stationLabelHideAtZoom;
+  if (typeof stationLabelHideAtZoom !== 'number' || !Number.isInteger(stationLabelHideAtZoom) || stationLabelHideAtZoom < 0 || stationLabelHideAtZoom > 19) throw new Error('Station label zoom must be an integer between 0 and 19.');
   if (!Number.isInteger(data.coverageFillOpacity) || Number(data.coverageFillOpacity) < 0 || Number(data.coverageFillOpacity) > 20) throw new Error('Coverage opacity must be between 0 and 20%.');
   if (!Array.isArray(data.sources) || data.sources.length < 1 || data.sources.length > 32) throw new Error('Configure between 1 and 32 map sources.');
   const ids = new Set<string>();
@@ -50,7 +56,7 @@ export function validateMapSettings(value: unknown): MapSettings {
     return { id, name, url, attribution, minZoom, maxZoom, enabled: source.enabled, cacheEnabled: source.cacheEnabled === true };
   });
   if (typeof data.defaultSourceId !== 'string' || !sources.some((item) => item.id === data.defaultSourceId && item.enabled)) throw new Error('Select an enabled default map source.');
-  return { coverageFillOpacity: Number(data.coverageFillOpacity), sources, defaultSourceId: data.defaultSourceId };
+  return { coverageFillOpacity: Number(data.coverageFillOpacity), stationLabelHideAtZoom, sources, defaultSourceId: data.defaultSourceId };
 }
 
 export function mapTileUrl(source: MapSource): string {

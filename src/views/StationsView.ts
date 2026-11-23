@@ -6,6 +6,7 @@ import allIcon from '../components/icons/account-group-outline.svg';
 import directIcon from '../components/icons/antenna.svg';
 import mobileIcon from '../components/icons/car-outline.svg';
 import fixedIcon from '../components/icons/home-outline.svg';
+import objectIcon from '../components/icons/crosshairs.svg';
 import weatherIcon from '../components/icons/weather-partly-cloudy.svg';
 import messageIcon from '../components/icons/forum.svg';
 import type { TrafficMonitorFrame } from './TrafficMonitorView';
@@ -26,11 +27,12 @@ export interface StationsViewState {
   search: string;
 }
 
-const filters: Array<{ id: StationFilter; label: string; icon: string }> = [
+const filters: Array<{ id: StationFilter; label: string; icon: string; caption?: string }> = [
   { id: 'all', label: 'All stations', icon: allIcon },
-  { id: 'direct', label: 'Directly heard (latest packet)', icon: directIcon },
+  { id: 'direct', label: 'Heard direct on RF in the last 60 minutes', caption: 'Heard direct', icon: directIcon },
   { id: 'mobile', label: 'Mobile stations', icon: mobileIcon },
   { id: 'fixed', label: 'Fixed stations', icon: fixedIcon },
+  { id: 'object', label: 'APRS objects and items', caption: 'Objects', icon: objectIcon },
   { id: 'weather', label: 'Weather stations', icon: weatherIcon },
 ];
 
@@ -50,7 +52,7 @@ function relativeTime(value: string): string {
 }
 
 export function renderStationFilters(stations: Station[], filter: StationFilter): string {
-  return filters.map(({ id, label, icon }) => `<button type="button" class="stations-filter${filter === id ? ' is-active' : ''}" data-stations-filter="${id}" title="${label}" aria-label="${label}" aria-pressed="${filter === id}"><img src="${icon}" alt=""><strong>${stations.filter((station) => matchesStationFilter(station, id)).length}</strong></button>`).join('');
+  return filters.map(({ id, label, icon, caption }) => `<button type="button" class="stations-filter${filter === id ? ' is-active' : ''}" data-stations-filter="${id}" title="${label}" aria-label="${label}" aria-pressed="${filter === id}"><img src="${icon}" alt="">${caption ? `<span class="stations-filter-caption">${caption}</span>` : ''}<strong>${stations.filter((station) => matchesStationFilter(station, id)).length}</strong></button>`).join('');
 }
 
 export function renderStationSearch(stations: Station[], state: StationsViewState): string {

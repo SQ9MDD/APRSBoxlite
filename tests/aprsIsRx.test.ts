@@ -43,7 +43,7 @@ test('logs in, receives fragmented lines, sends only verified local packets, and
   const frames: TrafficFrame[] = [];
   const statuses: string[] = [];
   const stations = new StationStore(() => undefined);
-  const service = new AprsIsRxService((frame) => { frames.push(frame); if (frame.direction === 'rx') stations.receive(frame.packet, frame.interfaceName); }, (_id, status) => statuses.push(status), '0.1.1-beta', () => {
+  const service = new AprsIsRxService((frame) => { frames.push(frame); if (frame.direction === 'rx') stations.receive(frame.packet, frame.interfaceName, frame); }, (_id, status) => statuses.push(status), '0.1.1-beta', () => {
     const socket = new FakeSocket(); sockets.push(socket); return socket as unknown as net.Socket;
   });
   try {
@@ -59,6 +59,7 @@ test('logs in, receives fragmented lines, sends only verified local packets, and
     assert.equal(frames[0].packet, 'SP5ABC>APRS,TCPIP*,qAC,TEST:!5223.45N/02101.23E>Test');
     assert.equal(stations.snapshot()[0]?.callsign, 'SP5ABC');
     assert.equal(stations.snapshot()[0]?.sourceInterface, 'APRS-IS · Internet');
+    assert.equal(stations.snapshot()[0]?.directHeardAt, undefined);
     socket.emit('data', Buffer.concat([Buffer.from('SP5XYZ>APRS:>Caf', 'ascii'), Buffer.from([0xe9]), Buffer.from('\r\n')]));
     assert.equal(frames[1].packet, 'SP5XYZ>APRS:>Café');
     const outgoing = encodeKissMessage('SQ9MDD-15', 'SP5ABC', 'Hello{00', 'WIDE2-1');

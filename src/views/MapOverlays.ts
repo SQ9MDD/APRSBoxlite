@@ -1,13 +1,6 @@
 import L from 'leaflet';
 import type { Station } from '../types';
-
-const trackColors = ['#ff2da3', '#00d7ff', '#a77bff', '#ff7a00', '#00e6b8'];
-
-function colorFor(callsign: string): string {
-  let hash = 0;
-  for (const char of callsign) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return trackColors[hash % trackColors.length];
-}
+import { colorFor, createStationTrack } from './StationTrack';
 
 // APRSBox uses a circle for omnidirectional PHG and a cardioid for directional PHG.
 function coverage(station: Station, fillOpacity: number): L.Layer | undefined {
@@ -115,22 +108,7 @@ export function createMapOverlays(map: L.Map, fillOpacity = 0.05) {
         station.kind === 'mobile' &&
         station.track.length > 1
       ) {
-        const points: L.LatLngTuple[] = station.track.map((point) => [
-          point.latitude,
-          point.longitude,
-        ]);
-        L.polyline(points, {
-          color: '#111827',
-          weight: 3,
-          opacity: 0.8,
-          interactive: false,
-        }).addTo(tracks);
-        L.polyline(points, {
-          color: colorFor(station.callsign),
-          weight: 1.75,
-          opacity: 0.96,
-          interactive: false,
-        }).addTo(tracks);
+        createStationTrack(station).addTo(tracks);
       }
       if (visibility.coverage) {
         const layer = coverage(station, fillOpacity);

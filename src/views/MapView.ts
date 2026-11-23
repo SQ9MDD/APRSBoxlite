@@ -138,6 +138,14 @@ export function renderMapView({
         viewport ? [viewport.latitude, viewport.longitude] : resetCenter(),
         viewport?.zoom ?? 12,
       );
+      const syncStationLabelVisibility = () => {
+        mapElement.classList.toggle(
+          'map-station-labels-hidden',
+          map.getZoom() <= mapSettings.stationLabelHideAtZoom,
+        );
+      };
+      syncStationLabelVisibility();
+      map.on('zoomend', syncStationLabelVisibility);
       const saveViewport = () => {
         const center = map.getCenter();
         onViewportChanged({
@@ -270,6 +278,7 @@ export function renderMapView({
         window.removeEventListener('aprs-map:reset', resetMapView);
         window.removeEventListener('aprs-map:center-station', centerStation);
         map.off('resize zoom move', syncMask);
+        map.off('zoomend', syncStationLabelVisibility);
         map.remove();
       };
     },

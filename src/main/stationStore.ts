@@ -2,6 +2,7 @@ import { decodeAprsPosition, unwrapAprsPacket } from './aprsPosition';
 import { identifyAprsDevice } from './tocalls';
 import { decodeAprsExtensions } from './aprsExtensions';
 import type { Station } from '../types';
+import type { TrafficFrame } from './kissTcpRx';
 
 export const STATION_AGE_MS = 60 * 60 * 1_000;
 const MAX_STATIONS = 1_000;
@@ -16,7 +17,11 @@ export class StationStore {
     this.onChange = onChange;
   }
 
-  receive(packet: string, sourceInterface?: string): void {
+  receive(
+    packet: string,
+    sourceInterface?: string,
+    reception?: Pick<TrafficFrame, 'source' | 'direction'>,
+  ): void {
     const position = decodeAprsPosition(packet);
     const effectivePacket = unwrapAprsPacket(packet);
     if (!effectivePacket) return;
@@ -30,6 +35,13 @@ export class StationStore {
     if (!destination) return;
     const path = headerMatch[3] ?? '';
     const previous = this.stations.get(callsign);
+    const now = Date.now();
+    // Only the originating station heard on RF can be directly heard locally.
+    const directHeardAt = reception?.source === 'kiss' &&
+      reception.direction === 'rx' && effectivePacket === packet &&
+      !path.includes('*') && !position?.entityType && !previous?.entityType
+      ? now
+      : previous?.directHeardAt;
     const device = identifyAprsDevice(destination, effectivePacket.slice(effectivePacket.indexOf(':') + 1)) ?? previous?.aprsDevice;
     if (position?.entityType && position.alive === false) {
       if (previous?.entityType === position.entityType) { this.stations.delete(callsign); this.publish(); }
@@ -50,6 +62,7 @@ export class StationStore {
         destination,
         path,
         sourceInterface,
+        directHeardAt,
         lastHeard: new Date().toISOString(),
       });
       this.publish();
@@ -57,7 +70,6 @@ export class StationStore {
     }
 
     // AX.25 represents SSID zero as a bare callsign in the RX pipeline.
-    const now = Date.now();
     const track = (previous?.track ?? []).filter(
       (point) => point.receivedAt > now - STATION_AGE_MS,
     );
@@ -83,6 +95,7 @@ export class StationStore {
       destination,
       path,
       sourceInterface,
+      directHeardAt,
       name: position.entityType === 'object' ? 'APRS object' : position.entityType === 'item' ? 'APRS item' : 'APRS station',
       kind:
         position.entityType ? 'object' :
@@ -139,6 +152,11 @@ export class StationStore {
     const now = Date.now();
     let nextExpiration = Infinity;
     for (const [callsign, station] of this.stations) {
+      if (station.directHeardAt !== undefined) {
+        const expiresAt = station.directHeardAt + STATION_AGE_MS;
+        if (expiresAt <= now) delete station.directHeardAt;
+        else nextExpiration = Math.min(nextExpiration, expiresAt);
+      }
       station.track = station.track.filter(
         (point) => point.receivedAt > now - STATION_AGE_MS,
       );
