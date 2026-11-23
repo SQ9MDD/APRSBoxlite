@@ -3010,3 +3010,6 @@ button {
 :root[data-theme='light'] .messages-groups { border-color: #cfdae5; }
 :root[data-theme='light'] .messages-groups input { background: #fff; color: #172b3c; border-color: #a9c3d8; }
 :root[data-theme='light'] .messages-groups small { color: #50697e; }
+
+.general-link { padding: 0; border: 0; background: none; color: #9cc9ff; font: inherit; text-decoration: underline; cursor: pointer; }
+:root[data-theme='light'] .general-link { color: #235f96; }

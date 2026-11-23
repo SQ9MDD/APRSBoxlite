@@ -234,29 +234,6 @@ function parseCoordinates(value: string): Coordinates | undefined {
   return { latitude, longitude };
 }
 
-function requestFreshSystemLocation(): Promise<GeolocationCoordinates> {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error('Geolocation is not available on this system.'));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => resolve(coords),
-      reject,
-      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
-    );
-  });
-}
-
-function applySystemLocation(coords: GeolocationCoordinates): void {
-  const coordinates = {
-    latitude: coords.latitude,
-    longitude: coords.longitude,
-  };
-  stationSettings.location = formatCoordinates(coordinates);
-  locationAccuracy = `System location accuracy: ±${Math.round(coords.accuracy)} m`;
-}
-
 function applyStoredStationConfiguration(
   configuration: Record<string, unknown>,
 ): void {
@@ -795,6 +772,13 @@ appRoot.addEventListener('click', (event) => {
       ...mapSettings,
       coverageFillOpacity: Number(coverage.value),
       stationLabelHideAtZoom: Number(labels.value),
+    });
+    return;
+  }
+  if (event.target.closest('[data-action="open-map-providers"]')) {
+    void window.aprsbox.config.openMapProviders().catch(() => {
+      alertMessage = { title: 'Could not open link', message: 'The map provider list could not be opened in your browser.', tone: 'error' };
+      renderApp();
     });
     return;
   }
@@ -1505,50 +1489,11 @@ function renderApp(): void {
       }),
     );
   appRoot
-    .querySelectorAll<HTMLButtonElement>('[data-action="get-location"]')
-    .forEach((button) =>
-      button.addEventListener('click', async () => {
-        try {
-          applySystemLocation(await requestFreshSystemLocation());
-        } catch {
-          alertMessage = {
-            title: 'Location unavailable',
-            message:
-              'System location could not be obtained. Check the operating system location permission.',
-            tone: 'error',
-          };
-        }
-        renderApp();
-      }),
-    );
-  appRoot
     .querySelectorAll<HTMLButtonElement>('[data-action="open-location-picker"]')
     .forEach((button) =>
-      button.addEventListener('click', async () => {
-        try {
-          const coords = await requestFreshSystemLocation();
-          const freshCenter = {
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-          };
-          locationAccuracy = `System location accuracy: ±${Math.round(coords.accuracy)} m`;
-          locationPickerCenter = freshCenter;
-        } catch {
-          const stationCoordinates = parseCoordinates(stationSettings.location);
-          if (!stationCoordinates) {
-            alertMessage = {
-              title: 'Location unavailable',
-              message:
-                'System location is unavailable and the station location is not valid.',
-              tone: 'error',
-            };
-            renderApp();
-            return;
-          }
-          locationPickerCenter = stationCoordinates;
-          locationAccuracy =
-            'System location unavailable; centered on station location.';
-        }
+      button.addEventListener('click', () => {
+        locationPickerCenter = parseCoordinates(stationSettings.location) ??
+          (mapViewport ? { latitude: mapViewport.latitude, longitude: mapViewport.longitude } : { latitude: 50.055, longitude: 19.97 });
         locationPickerOpen = true;
         renderApp();
       }),

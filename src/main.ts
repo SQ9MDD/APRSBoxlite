@@ -1,7 +1,7 @@
 import { availableMessageInterfaces, sendMessageOnInterfaces } from './main/messageTransport';
 import { appendAprsIsGroups, readMessageGroups } from './messageGroups';
 import { defaultAprsIsFilter, validAprsIsFilter } from './aprsIsFilter';
-import { app, BrowserWindow, dialog, ipcMain, net, powerMonitor, protocol, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, net, powerMonitor, protocol, session, shell } from 'electron';
 import path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
@@ -571,6 +571,7 @@ app.whenReady().then(async () => {
     if (typeof visible !== 'boolean') throw new Error('Invalid scroller visibility.');
     return updateConfig({ scrollerVisible: visible });
   });
+  ipcMain.handle('config:open-map-providers', () => shell.openExternal('https://switch2osm.org/providers/#Allows-free-usage'));
   ipcMain.handle('config:save-map-settings', (_event, value: unknown) =>
     updateConfig({ mapSettings: validateMapSettings(value) }),
   );

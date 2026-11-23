@@ -46,6 +46,7 @@ interface Window {
       ): () => void;
     };
     config: {
+      openMapProviders(): Promise<void>;
       getMapCacheStats(id: string): Promise<{ count: number; bytes: number }>;
       clearMapCache(id: string): Promise<void>;
       saveMapSettings(settings: import('./mapSettings').MapSettings): Promise<{ path: string; storage: 'portable' | 'userData' }>;

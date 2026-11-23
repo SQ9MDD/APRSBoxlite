@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
     },
   },
   config: {
+    openMapProviders: (): Promise<void> => ipcRenderer.invoke('config:open-map-providers'),
     getMapCacheStats: (id: string): Promise<{ count: number; bytes: number }> => ipcRenderer.invoke('map:cache-stats', id),
     clearMapCache: (id: string): Promise<void> => ipcRenderer.invoke('map:clear-cache', id),
     saveMapSettings: (settings: import('./mapSettings').MapSettings) => ipcRenderer.invoke('config:save-map-settings', settings),
