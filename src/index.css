@@ -148,6 +148,7 @@ button {
   color: #7f98b0;
   font-size: 11px;
 }
+.sidebar-copyright { opacity: 0.5; }
 .sidebar-footer .pulse-dot {
   width: 6px;
   height: 6px;
