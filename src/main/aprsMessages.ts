@@ -357,6 +357,8 @@ export class MessageService {
       (message.status !== 'failed' && message.status !== 'rejected')
     )
       throw new Error('Message cannot be retried.');
+    if (normalizeCallsign(message.sender) !== normalizeCallsign(this.ownCallsign()))
+      throw new Error('Switch to the original station identity before retrying this message.');
     const frame = message.kind === 'position-response'
       ? encodeKissFrame(message.sender, message.text, message.path)
       : encodeKissMessage(message.sender, message.recipient, message.text + (message.number ? `{${message.number}` : ''), message.path);
@@ -365,6 +367,20 @@ export class MessageService {
     message.error = undefined;
     this.publish();
     await this.attempt(message, frame);
+  }
+
+  cancelPending(reason = 'Cancelled by station profile change.'): void {
+    for (const timer of this.timers.values()) clearTimeout(timer);
+    for (const timer of this.acknowledgements) clearTimeout(timer);
+    this.timers.clear();
+    this.acknowledgements.clear();
+    for (const message of this.messages) {
+      if (message.direction === 'tx' && message.status === 'pending') {
+        message.status = 'failed';
+        message.error = reason;
+      }
+    }
+    this.publish();
   }
 
   dispose(): void {
@@ -441,6 +457,7 @@ export class MessageService {
     const message = this.messages.findLast(
       (item) =>
         item.direction === 'tx' &&
+        item.sender === normalizeCallsign(this.ownCallsign()) &&
         item.recipient === sender &&
         item.number === number &&
         (item.status === 'pending' || item.status === 'failed'),

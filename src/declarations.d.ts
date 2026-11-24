@@ -24,7 +24,7 @@ interface Window {
       onResume(callback: () => void): () => void;
     };
     messages: {
-      saveGroups(groups: { rf: string[]; aprsIs: string[] }): Promise<void>;
+      saveGroups(groups: { rf: string[]; aprsIs: string[] }, profileId: string): Promise<void>;
       get(): Promise<import('./types').AprsMessage[]>;
       markRead(recipient: string): Promise<void>;
       deleteConversation(recipient: string): Promise<void>;
@@ -33,8 +33,8 @@ interface Window {
         text: string;
         interfaceId: string;
         path: string;
-      }): Promise<void>;
-      retry(id: string): Promise<void>;
+      }, profileId: string): Promise<void>;
+      retry(id: string, profileId: string): Promise<void>;
       onChanged(
         callback: (messages: import('./types').AprsMessage[]) => void,
       ): () => void;
@@ -46,13 +46,15 @@ interface Window {
       ): () => void;
     };
     config: {
+      profileAction(action: import('./stationProfiles').ProfileAction, profileId: string, station: import('./stationProfiles').StationSettings): Promise<Record<string, unknown>>;
+      onRuntimeChanged(callback: (configuration: Record<string, unknown>) => void): () => void;
       saveClockMode(mode: 'utc' | 'local'): Promise<void>;
       openMapProviders(): Promise<void>;
       getMapCacheStats(id: string): Promise<{ count: number; bytes: number }>;
       clearMapCache(id: string): Promise<void>;
       saveMapSettings(settings: import('./mapSettings').MapSettings): Promise<{ path: string; storage: 'portable' | 'userData' }>;
-      saveMessageInterface(id: string): Promise<{ path: string; storage: 'portable' | 'userData' }>;
-      saveMessagePath(recipient: string, path: string): Promise<{ path: string; storage: 'portable' | 'userData' }>;
+      saveMessageInterface(id: string, profileId: string): Promise<{ path: string; storage: 'portable' | 'userData' }>;
+      saveMessagePath(recipient: string, path: string, profileId: string): Promise<{ path: string; storage: 'portable' | 'userData' }>;
       updateTocalls(): Promise<{ count: number; generationTime?: string }>;
       exportBackup(): Promise<boolean>;
       importBackup(): Promise<boolean>;
@@ -84,7 +86,7 @@ interface Window {
         symbolOverlay: string;
         beaconPath: string;
         beaconInterfaceId: string;
-      }): Promise<{ path: string; storage: 'portable' | 'userData' }>;
+      }, profileId: string): Promise<{ path: string; storage: 'portable' | 'userData' }>;
       sendBeacon(station: {
         callsign: string;
         ssid: string;
@@ -98,7 +100,7 @@ interface Window {
         symbolOverlay: string;
         beaconPath: string;
         beaconInterfaceId: string;
-      }): Promise<{ sent: string[]; failed: string[] }>;
+      }, profileId: string): Promise<{ sent: string[]; failed: string[] }>;
       saveInterfaces(
         interfaces: Array<{
           id: string;
@@ -119,6 +121,7 @@ interface Window {
           aprsIsPasscode?: string;
   aprsIsIgateRfToIs?: boolean;
         }>,
+        profileId: string,
       ): Promise<{ path: string; storage: 'portable' | 'userData' }>;
     };
     traffic: {

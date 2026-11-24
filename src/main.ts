@@ -1,3 +1,4 @@
+import { activeStationProfile, applyProfileAction, normalizeProfileConfiguration, patchProfileConfiguration, runtimeConfiguration, type ProfileAction, type ProfileConfiguration } from './stationProfiles';
 import { availableMessageInterfaces, sendMessageOnInterfaces } from './main/messageTransport';
 import { appendAprsIsGroups, readMessageGroups } from './messageGroups';
 import { defaultAprsIsFilter, validAprsIsFilter } from './aprsIsFilter';
@@ -123,6 +124,8 @@ const createWindow = () => {
 };
 
 let configStorage: ConfigStorage;
+const storedConfiguration = () => configStorage.getConfiguration() as ProfileConfiguration;
+const getConfiguration = () => runtimeConfiguration(storedConfiguration());
 let kissTcpRxService: KissTcpRxService;
 let kissSerialRxService: KissSerialRxService;
 let aprsIsRxService: AprsIsRxService;
@@ -306,13 +309,20 @@ app.whenReady().then(async () => {
     userDataDirectory: app.getPath('userData'),
   });
   await configStorage.initialize();
+  const originalConfiguration = configStorage.getConfiguration();
+  const migratedConfiguration = normalizeProfileConfiguration(originalConfiguration);
+  if (JSON.stringify(originalConfiguration) !== JSON.stringify(migratedConfiguration))
+    await configStorage.save(migratedConfiguration);
+  let switchingProfile = false;
+  let transmissionGeneration = 0;
+  const transmissions = new Set<Promise<void>>();
   const tocallPath = path.join(path.dirname(configStorage.getLocation().path), 'tocalls.json');
   try { await loadSavedTocalls(tocallPath); }
   catch (error) { console.error('Failed to load saved TOCALL database; using the bundled list:', error); }
   const tileCache = new MapTileCache(
     () => path.dirname(configStorage.getLocation().path),
     () => {
-      try { return validateMapSettings(configStorage.getConfiguration().mapSettings ?? DEFAULT_MAP_SETTINGS).sources; }
+      try { return validateMapSettings(getConfiguration().mapSettings ?? DEFAULT_MAP_SETTINGS).sources; }
       catch { return DEFAULT_MAP_SETTINGS.sources; }
     },
     (url) => net.fetch(url, { signal: AbortSignal.timeout(15_000), headers: { 'User-Agent': `APRSBoxLite/${app.getVersion()}` } }),
@@ -344,14 +354,14 @@ app.whenReady().then(async () => {
     });
   };
   const onKissFrame = (frame: TrafficFrame) => {
-      const station = configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown } | undefined;
+      const station = getConfiguration().station as { callsign?: unknown; ssid?: unknown } | undefined;
       if (typeof station?.callsign === 'string' && typeof station.ssid === 'string')
         frame.category = classifyTraffic(frame.packet, `${station.callsign}${station.ssid}`);
       broadcast('traffic:received', frame);
       if (frame.direction === 'rx') {
         stationStore.receive(frame.packet, frame.interfaceName, frame);
-        if (frame.source === 'kiss') aprsIsRxService.forwardRf(frame);
-        messageService.receive(frame.packet, frame.interfaceId, frame.source !== 'aprs-is' || aprsIsRxService.canTransmit(frame.interfaceId));
+        if (frame.source === 'kiss' && !switchingProfile) aprsIsRxService.forwardRf(frame);
+        messageService.receive(frame.packet, frame.interfaceId, !switchingProfile && (frame.source !== 'aprs-is' || aprsIsRxService.canTransmit(frame.interfaceId)));
       }
     };
   const onKissStatus = (interfaceId: string, status: ConnectionStatus) =>
@@ -376,7 +386,7 @@ app.whenReady().then(async () => {
     window.webContents.send('ble:write', { requestId, interfaceId, bytes });
   }));
   const getMessageGroups = () => {
-    try { return readMessageGroups(configStorage.getConfiguration().messageGroups); }
+    try { return readMessageGroups(getConfiguration().messageGroups); }
     catch { return readMessageGroups(undefined); }
   };
   const configureKiss = (interfaces: InterfaceConfiguration[]) => {
@@ -384,7 +394,7 @@ app.whenReady().then(async () => {
     kissTcpRxService.configure(wired);
     kissSerialRxService.configure(wired);
     kissBleRxService.configure(interfaces);
-    aprsIsRxService.configure(interfaces, configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown; location?: unknown } | undefined, getMessageGroups().aprsIs);
+    aprsIsRxService.configure(interfaces, getConfiguration().station as { callsign?: unknown; ssid?: unknown; location?: unknown } | undefined, getMessageGroups().aprsIs);
   };
   ipcMain.on('ble:status', (event, id: unknown, status: unknown) => {
     if (!BrowserWindow.fromWebContents(event.sender) || typeof id !== 'string' || !['connecting', 'connected', 'disconnected', 'error'].includes(String(status))) return;
@@ -393,17 +403,21 @@ app.whenReady().then(async () => {
   ipcMain.on('ble:receive', (event, id: unknown, bytes: unknown) => {
     if (BrowserWindow.fromWebContents(event.sender) && typeof id === 'string' && bytes instanceof Uint8Array) kissBleRxService.receive(id, bytes);
   });
-  const transmitKiss = (interfaceId: string, frame: Uint8Array) =>
-    aprsIsRxService.isConfigured(interfaceId)
+  const transmitKiss = async (interfaceId: string, frame: Uint8Array): Promise<void> => {
+    if (switchingProfile) throw new Error('Station profile is changing. Try again after the switch.');
+    const transmission = aprsIsRxService.isConfigured(interfaceId)
       ? aprsIsRxService.transmit(interfaceId, frame)
       : kissBleRxService.isConfigured(interfaceId)
       ? kissBleRxService.transmit(interfaceId, frame)
       : kissSerialRxService.isConfigured(interfaceId)
       ? kissSerialRxService.transmit(interfaceId, frame)
       : kissTcpRxService.transmit(interfaceId, frame);
+    transmissions.add(transmission);
+    try { await transmission; } finally { transmissions.delete(transmission); }
+  };
   const kissStatuses = () => ({ ...kissTcpRxService.getStatuses(), ...kissSerialRxService.getStatuses(), ...kissBleRxService.getStatuses(), ...aprsIsRxService.getStatuses() });
   const getAvailableMessageInterfaces = () => {
-    const interfaces = validateInterfaces(configStorage.getConfiguration().interfaces ?? []);
+    const interfaces = validateInterfaces(getConfiguration().interfaces ?? []);
     const statuses = kissStatuses();
     return availableMessageInterfaces(interfaces, (item) => statuses[item.id] === 'connected' && (item.type !== 'aprs-is' || aprsIsRxService.canTransmit(item.id)));
   };
@@ -429,7 +443,7 @@ app.whenReady().then(async () => {
   });
   messageService = new MessageService(
     () => {
-      const station = configStorage.getConfiguration().station as
+      const station = getConfiguration().station as
         | { callsign?: unknown; ssid?: unknown }
         | undefined;
       if (
@@ -446,7 +460,7 @@ app.whenReady().then(async () => {
     },
     storedMessages,
     (sender) => {
-      const config = configStorage.getConfiguration();
+      const config = getConfiguration();
       const paths = config.messagePaths as Record<string, unknown> | undefined;
       const path = paths && typeof paths[sender] === 'string' ? paths[sender] as string : '';
       return {
@@ -460,7 +474,7 @@ app.whenReady().then(async () => {
   );
   if (storedMessages.some((message) => message.status === 'pending'))
     persistMessages(messageService.snapshot());
-  const storedInterfaces = configStorage.getConfiguration().interfaces;
+  const storedInterfaces = getConfiguration().interfaces;
   if (Array.isArray(storedInterfaces)) {
     try {
       configureKiss(validateInterfaces(storedInterfaces));
@@ -469,7 +483,7 @@ app.whenReady().then(async () => {
     }
   }
   ipcMain.handle('config:get-active-path', () => configStorage.getLocation());
-  ipcMain.handle('config:get', () => configStorage.getConfiguration());
+  ipcMain.handle('config:get', () => getConfiguration());
   let tocallUpdate: Promise<{ count: number; generationTime?: string }> | undefined;
   ipcMain.handle('tocall:update', () => {
     if (!tocallUpdate) {
@@ -481,36 +495,84 @@ app.whenReady().then(async () => {
     return tocallUpdate;
   });
   let configWrites = Promise.resolve();
-  const updateConfig = (patch: Record<string, unknown>) => {
-    const write = configWrites.then(() =>
-      configStorage.save({ ...configStorage.getConfiguration(), ...patch }),
-    );
-    configWrites = write.then(
-      () => undefined,
-      () => undefined,
-    );
+  const queueConfiguration = <T>(operation: () => Promise<T>): Promise<T> => {
+    const write = configWrites.then(operation);
+    configWrites = write.then(() => undefined, () => undefined);
     return write;
   };
+  const assertProfile = (id: unknown) => {
+    if (typeof id !== 'string' || id !== storedConfiguration().activeProfileId)
+      throw new Error('The active profile changed. Reload its settings and try again.');
+  };
+  const commitConfiguration = async (next: ProfileConfiguration, resetStation: boolean, applyRuntime = false) => {
+    const nextInterfaces = applyRuntime || resetStation ? validateInterfaces(runtimeConfiguration(next).interfaces) : undefined;
+    if (nextInterfaces) {
+      const profile = activeStationProfile(next);
+      for (const item of nextInterfaces.filter((entry) => entry.type === 'aprs-is')) {
+        const filter = item.aprsIsFilter ?? defaultAprsIsFilter(profile.station.location, item.aprsIsRadius || '25') ?? '';
+        if (!validAprsIsFilter(appendAprsIsGroups(filter, profile.messageGroups.aprsIs))) throw new Error('APRS-IS filters and groups are too long.');
+      }
+    }
+    if (resetStation) {
+      switchingProfile = true;
+      transmissionGeneration++;
+      clearTimeout(beaconTimer);
+      statusScheduler?.dispose();
+      messageService.cancelPending();
+    }
+    try {
+      if (resetStation && transmissions.size) {
+        // Finish writes already handed to the transports before changing identity.
+        // A stalled transport keeps the old profile active rather than mixing TX.
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            Promise.allSettled([...transmissions]),
+            new Promise<never>((_resolve, reject) => { timeout = setTimeout(() => reject(new Error('Transmission is still in progress. Wait for the interface, then switch again.')), 65_000); }),
+          ]);
+        } finally { clearTimeout(timeout); }
+      }
+      const location = await configStorage.save(next);
+      if (nextInterfaces) configureKiss(nextInterfaces);
+      if (applyRuntime || resetStation) {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send('config:runtime-changed', getConfiguration());
+        }
+      }
+      return location;
+    } finally {
+      if (resetStation) switchingProfile = false;
+      if (resetStation || applyRuntime) { scheduleBeacon(); statusScheduler?.schedule(); }
+    }
+  };
+  const updateConfig = (patch: Record<string, unknown> | (() => Record<string, unknown>), profileId?: unknown) =>
+    queueConfiguration(async () => {
+      if (profileId !== undefined) assertProfile(profileId);
+      const changes = typeof patch === 'function' ? patch() : patch;
+      const current = storedConfiguration();
+      const next = patchProfileConfiguration(current, changes);
+      const before = activeStationProfile(current).station;
+      const after = activeStationProfile(next).station;
+      return commitConfiguration(next, before.callsign !== after.callsign || before.ssid !== after.ssid,
+        ['station', 'interfaces', 'messageGroups', 'enabledInterfaceIds'].some((key) => key in changes));
+    });
   ipcMain.handle('ble:auto-scan', (event) => {
     if (!BrowserWindow.fromWebContents(event.sender)) throw new Error('Invalid window.');
     return event.sender.executeJavaScript('window.dispatchEvent(new Event("aprsbox:ble-auto-scan"))', true);
   });
   ipcMain.handle('ble:remember', (event, id: unknown, deviceId: unknown, deviceName: unknown) => {
     if (!BrowserWindow.fromWebContents(event.sender) || typeof id !== 'string' || typeof deviceId !== 'string' || !deviceId || deviceId.length > 255 || typeof deviceName !== 'string' || deviceName.length > 255) throw new Error('Invalid Bluetooth device.');
-    const write = configWrites.then(async () => {
-      const items = validateInterfaces(configStorage.getConfiguration().interfaces ?? []);
+    return updateConfig(() => {
+      const items = validateInterfaces(getConfiguration().interfaces ?? []);
       const item = items.find((entry) => entry.id === id && entry.type === 'kiss-ble' && entry.enabled);
       if (!item || kissBleRxService.getStatuses()[id] !== 'connected') throw new Error('Bluetooth interface is not connected.');
       item.bleDeviceId = deviceId; item.bleDeviceName = deviceName;
-      await configStorage.save({ ...configStorage.getConfiguration(), interfaces: items });
-      configureKiss(items);
+      return { interfaces: items };
     });
-    configWrites = write.then(() => undefined, () => undefined);
-    return write;
   });
   const sendBeacon = async (station: StationConfiguration) => {
     const interfaces = validateInterfaces(
-      configStorage.getConfiguration().interfaces ?? [],
+      getConfiguration().interfaces ?? [],
     );
     const statuses = kissStatuses();
     const targets = selectBeaconInterfaces(interfaces, station.beaconInterfaceId, (item) =>
@@ -528,13 +590,13 @@ app.whenReady().then(async () => {
   };
   statusScheduler = createStatusScheduler(
     () => {
-      try { return validateStationConfiguration(configStorage.getConfiguration().station); }
+      try { return validateStationConfiguration(getConfiguration().station); }
       catch { return { callsign: '', status: '', statusInterval: 'Never' }; }
     },
     async () => {
-      const station = validateStationConfiguration(configStorage.getConfiguration().station);
+      const station = validateStationConfiguration(getConfiguration().station);
       const statuses = kissStatuses();
-      const targets = selectBeaconInterfaces(validateInterfaces(configStorage.getConfiguration().interfaces ?? []), station.beaconInterfaceId, (item) =>
+      const targets = selectBeaconInterfaces(validateInterfaces(getConfiguration().interfaces ?? []), station.beaconInterfaceId, (item) =>
         statuses[item.id] === 'connected' && (item.type !== 'aprs-is' || aprsIsRxService.canTransmit(item.id)),
       );
       const result = await transmitBeacon(targets, encodeStatus(station), transmitKiss);
@@ -544,19 +606,20 @@ app.whenReady().then(async () => {
   statusScheduler.schedule();
   const scheduleBeacon = (retry = false) => {
     clearTimeout(beaconTimer);
+    const generation = ++transmissionGeneration;
     let station: StationConfiguration;
     try {
-      station = validateStationConfiguration(configStorage.getConfiguration().station);
+      station = validateStationConfiguration(getConfiguration().station);
       if (!station.callsign) return;
       const minutes = Number.parseInt(station.beaconInterval, 10);
       if (![15, 30, 60].includes(minutes)) return;
       beaconTimer = setTimeout(async () => {
         try {
-          await sendBeacon(validateStationConfiguration(configStorage.getConfiguration().station));
-          scheduleBeacon();
+          await sendBeacon(validateStationConfiguration(getConfiguration().station));
+          if (generation === transmissionGeneration) scheduleBeacon();
         } catch (error) {
           console.error('Automatic beacon not sent:', error);
-          scheduleBeacon(true);
+          if (generation === transmissionGeneration) scheduleBeacon(true);
         }
       }, retry ? 60_000 : minutes * 60_000);
       beaconTimer.unref();
@@ -565,14 +628,26 @@ app.whenReady().then(async () => {
     }
   };
   scheduleBeacon();
-  ipcMain.handle('config:save-station', (_event, station: unknown) =>
-    updateConfig({ station: validateStationConfiguration(station) }).then((location) => {
-      aprsIsRxService.configure(validateInterfaces(configStorage.getConfiguration().interfaces ?? []), configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown; location?: unknown } | undefined, getMessageGroups().aprsIs);
-      scheduleBeacon();
-      statusScheduler?.schedule();
-      return location;
-    }),
-  );
+  ipcMain.handle('config:save-station', (_event, station: unknown, profileId: unknown) => {
+    assertProfile(profileId);
+    return updateConfig({ station: validateStationConfiguration(station) }, profileId);
+  });
+  ipcMain.handle('config:profile-action', (_event, action: unknown, profileId: unknown, station: unknown) => {
+    assertProfile(profileId);
+    if (!action || typeof action !== 'object' || Array.isArray(action)) throw new Error('Invalid profile action.');
+    const request = action as ProfileAction;
+    const validatedStation = request.action === 'rename' || request.action === 'delete' ? undefined : validateStationConfiguration(station);
+    return queueConfiguration(async () => {
+      assertProfile(profileId);
+      const current = storedConfiguration();
+      const updated = validatedStation ? patchProfileConfiguration(current, { station: validatedStation }) : current;
+      const next = applyProfileAction(updated, request);
+      const before = activeStationProfile(current).station;
+      const after = activeStationProfile(next).station;
+      await commitConfiguration(next, current.activeProfileId !== next.activeProfileId || before.callsign !== after.callsign || before.ssid !== after.ssid, true);
+      return getConfiguration();
+    });
+  });
   ipcMain.handle('config:save-map-mask', (_event, value: unknown) => {
     if (!value || typeof value !== 'object')
       throw new Error('Invalid map mask settings.');
@@ -627,41 +702,42 @@ app.whenReady().then(async () => {
     return updateConfig({ mapViewport: { latitude, longitude, zoom } });
   });
   const validateGroupFilters = (interfaces: InterfaceConfiguration[], groups: string[]) => {
-    const station = configStorage.getConfiguration().station as { location?: unknown } | undefined;
+    const station = getConfiguration().station as { location?: unknown } | undefined;
     for (const item of interfaces.filter((entry) => entry.type === 'aprs-is')) {
       const filter = item.aprsIsFilter ?? defaultAprsIsFilter(station?.location, item.aprsIsRadius || '25') ?? '';
       if (!validAprsIsFilter(appendAprsIsGroups(filter, groups))) throw new Error('APRS-IS filters and groups are too long.');
     }
   };
-  ipcMain.handle('config:save-interfaces', (_event, interfaces: unknown) => {
+  ipcMain.handle('config:save-interfaces', (_event, interfaces: unknown, profileId: unknown) => {
+    assertProfile(profileId);
     const validatedInterfaces = validateInterfaces(interfaces);
-    validateGroupFilters(validatedInterfaces, getMessageGroups().aprsIs);
-    return updateConfig({ interfaces: validatedInterfaces }).then(
-      (location) => {
-        configureKiss(validatedInterfaces);
-        return location;
-      },
-    );
+    return updateConfig(() => {
+      validateGroupFilters(validatedInterfaces, getMessageGroups().aprsIs);
+      return { interfaces: validatedInterfaces };
+    }, profileId);
   });
-  ipcMain.handle('config:save-message-groups', (_event, value: unknown) => {
+  ipcMain.handle('config:save-message-groups', (_event, value: unknown, profileId: unknown) => {
+    assertProfile(profileId);
     if (!value || typeof value !== 'object' || Array.isArray(value) || !('rf' in value) || !('aprsIs' in value)) throw new Error('Invalid message group settings.');
     const groups = readMessageGroups(value);
-    const interfaces = validateInterfaces(configStorage.getConfiguration().interfaces ?? []);
-    validateGroupFilters(interfaces, groups.aprsIs);
-    return updateConfig({ messageGroups: groups }).then((location) => {
-      aprsIsRxService.configure(validateInterfaces(configStorage.getConfiguration().interfaces ?? []), configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown; location?: unknown } | undefined, groups.aprsIs);
-      return location;
-    });
+    return updateConfig(() => {
+      validateGroupFilters(validateInterfaces(getConfiguration().interfaces ?? []), groups.aprsIs);
+      return { messageGroups: groups };
+    }, profileId);
   });
-  ipcMain.handle('config:save-message-interface', (_event, id: unknown) => {
+  ipcMain.handle('config:save-message-interface', (_event, id: unknown, profileId: unknown) => {
+    assertProfile(profileId);
     if (typeof id !== 'string' || id.length > 80) throw new Error('Invalid message interface.');
-    if (id && !validateInterfaces(configStorage.getConfiguration().interfaces ?? []).some((item) => item.id === id && item.enabled && !item.txBlocked)) throw new Error('Message interface is unavailable.');
-    return updateConfig({ messageInterfaceId: id });
+    return updateConfig(() => {
+      if (id && !validateInterfaces(getConfiguration().interfaces ?? []).some((item) => item.id === id && item.enabled && !item.txBlocked)) throw new Error('Message interface is unavailable.');
+      return { messageInterfaceId: id };
+    }, profileId);
   });
-  ipcMain.handle('config:save-message-path', (_event, recipient: unknown, path: unknown) => {
+  ipcMain.handle('config:save-message-path', (_event, recipient: unknown, path: unknown, profileId: unknown) => {
+    assertProfile(profileId);
     if (typeof recipient !== 'string' || !/^(?:[A-Z0-9]{1,9}|[A-Z0-9]{1,6}-(?:[0-9]|1[0-5]))$/.test(recipient) || typeof path !== 'string' || path.length > 71) throw new Error('Invalid conversation path.');
-    const write = configWrites.then(async () => {
-      const stored = configStorage.getConfiguration().messagePaths;
+    return updateConfig(() => {
+      const stored = getConfiguration().messagePaths;
       const paths: Record<string, string> = {};
       if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
         for (const [key, value] of Object.entries(stored)) {
@@ -672,17 +748,15 @@ app.whenReady().then(async () => {
         if (!Object.hasOwn(paths, recipient) && Object.keys(paths).length >= 1000) throw new Error('Too many saved conversation paths.');
         paths[recipient] = path;
       } else delete paths[recipient];
-      return configStorage.save({ ...configStorage.getConfiguration(), messagePaths: paths });
-    });
-    configWrites = write.then(() => undefined, () => undefined);
-    return write;
+      return { messagePaths: paths };
+    }, profileId);
   });
   ipcMain.handle('config:export-backup', async () => {
     const result = await dialog.showSaveDialog({ title: 'Export configuration backup', defaultPath: 'APRSBoxLite-config-backup.json', filters: [{ name: 'JSON', extensions: ['json'] }] });
     if (result.canceled || !result.filePath) return false;
     if ([configStorage.getLocation().path, path.join(app.getPath('userData'), 'messages.json')].some((file) => path.resolve(file) === path.resolve(result.filePath!))) throw new Error('Choose a separate backup file.');
     await configWrites;
-    await atomicWriteJson(result.filePath, createConfigurationBackup(configStorage.getConfiguration()));
+    await atomicWriteJson(result.filePath, createConfigurationBackup(storedConfiguration()));
     return true;
   });
   ipcMain.handle('config:import-backup', async () => {
@@ -691,26 +765,22 @@ app.whenReady().then(async () => {
     const file = result.filePaths[0];
     if ((await fs.stat(file)).size > 1024 * 1024) throw new Error('Backup file is too large.');
     const configuration = readConfigurationBackup(JSON.parse(await fs.readFile(file, 'utf8')));
-    const restored = { ...configuration };
-    if (configuration.station !== undefined) restored.station = validateStationConfiguration(configuration.station);
-    const interfaces = configuration.interfaces === undefined ? [] : validateInterfaces(configuration.interfaces);
-    if (configuration.interfaces !== undefined) restored.interfaces = interfaces;
+    const restored = normalizeProfileConfiguration(configuration);
+    for (const profile of restored.profiles) {
+      profile.station = { ...profile.station, ...validateStationConfiguration(profile.station) };
+      validateInterfaces(runtimeConfiguration({ ...restored, activeProfileId: profile.id }).interfaces);
+    }
     if (configuration.mapSettings !== undefined) restored.mapSettings = validateMapSettings(configuration.mapSettings);
     const confirmation = await dialog.showMessageBox({ type: 'warning', buttons: ['Cancel', 'Import'], defaultId: 0, cancelId: 0, title: 'Import configuration backup', message: 'Replace the current configuration with this backup?', detail: 'Saved station, interfaces and map settings will be replaced. Message history is not affected.' });
     if (confirmation.response !== 1) return false;
-    const write = configWrites.then(() => configStorage.save(restored));
-    configWrites = write.then(() => undefined, () => undefined);
-    await write;
-    configureKiss(interfaces);
-    scheduleBeacon();
-    statusScheduler?.schedule();
+    await queueConfiguration(() => commitConfiguration(restored, true));
     return true;
   });
   ipcMain.handle('traffic:get-recent', () => kissHistory());
   ipcMain.handle('traffic:save-log', async (_event, filter: unknown) => {
     if (typeof filter !== 'string' || filter.length > 1024) throw new Error('Invalid traffic filter.');
     const snapshot = filterTrafficFrames(kissHistory(), filter);
-    const station = configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown } | undefined;
+    const station = getConfiguration().station as { callsign?: unknown; ssid?: unknown } | undefined;
     const callsign = typeof station?.callsign === 'string' ? station.callsign : '';
     const ssid = callsign.trim() && typeof station?.ssid === 'string' ? station.ssid : '';
     const result = await dialog.showSaveDialog({ title: 'Save traffic log', defaultPath: trafficLogFilename(`${callsign}${ssid}`, new Date()), filters: [{ name: 'Text files', extensions: ['txt'] }] });
@@ -722,13 +792,17 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('stations:get', () => stationStore.snapshot());
   ipcMain.handle('messages:get', () => messageService.snapshot());
-  ipcMain.handle('station:send-beacon', async (_event, value: unknown) => {
+  ipcMain.handle('station:send-beacon', async (_event, value: unknown, profileId: unknown) => {
+    assertProfile(profileId);
+    if (switchingProfile) throw new Error('Station profile is changing.');
     const station = validateStationConfiguration(value);
     const result = await sendBeacon(station);
     scheduleBeacon();
     return result;
   });
-  ipcMain.handle('messages:send', (_event, value: unknown) => {
+  ipcMain.handle('messages:send', (_event, value: unknown, profileId: unknown) => {
+    assertProfile(profileId);
+    if (switchingProfile) throw new Error('Station profile is changing.');
     if (!value || typeof value !== 'object')
       throw new Error('Invalid message.');
     const { recipient, text, interfaceId, path } = value as Record<
@@ -753,7 +827,9 @@ app.whenReady().then(async () => {
     if (typeof recipient !== 'string') throw new Error('Invalid conversation.');
     messageService.deleteConversation(recipient);
   });
-  ipcMain.handle('messages:retry', (_event, id: unknown) => {
+  ipcMain.handle('messages:retry', (_event, id: unknown, profileId: unknown) => {
+    assertProfile(profileId);
+    if (switchingProfile) throw new Error('Station profile is changing.');
     if (typeof id !== 'string') throw new Error('Invalid message ID.');
     return messageService.retry(id);
   });

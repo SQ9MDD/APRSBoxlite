@@ -1,3 +1,6 @@
+import { renderStationProfiles } from './StationProfilesView';
+import type { StationProfile, StationSettings } from '../stationProfiles';
+export type { StationSettings } from '../stationProfiles';
 import { defaultAprsIsFilter } from '../aprsIsFilter';
 import calculatorIcon from '../components/icons/calculator.svg';
 import checkIcon from '../components/icons/check-circle.svg';
@@ -19,21 +22,6 @@ const symbolIcons = import.meta.glob('../components/icons/aprs-symbols/*.png', {
 }) as Record<string, string>;
 
 export type SettingsSection = 'general' | 'station' | 'interfaces';
-
-export interface StationSettings {
-  callsign: string;
-  ssid: string;
-  comment: string;
-  location: string;
-  status: string;
-  beaconInterval: string;
-  statusInterval: string;
-  symbolTable: string;
-  symbolCode: string;
-  symbolOverlay: string;
-  beaconPath: string;
-  beaconInterfaceId: string;
-}
 
 export interface PhgValues {
   power: string;
@@ -80,9 +68,11 @@ export function renderSettingsView(
   phgValues: PhgValues,
   mapSettings: MapSettings,
   mapSourceDraft: MapSource | undefined,
+  profiles: StationProfile[],
+  activeProfileId: string,
 ): { html: string } {
   return {
-    html: `<div class="settings-view">${renderSection(activeSection, interfaces, interfaceDraft, selectedInterfaceId, interfaceStatuses, stationSettings, locationAccuracy, phgCalculatorOpen, phgValues, mapSettings, mapSourceDraft)}</div>`,
+    html: `<div class="settings-view">${activeSection === 'station' ? '<div class="station-workspace">' : ''}${renderSection(activeSection, interfaces, interfaceDraft, selectedInterfaceId, interfaceStatuses, stationSettings, locationAccuracy, phgCalculatorOpen, phgValues, mapSettings, mapSourceDraft)}${activeSection === 'station' ? `${renderStationProfiles(profiles, activeProfileId)}</div>` : ''}</div>`,
   };
 }
 
@@ -180,7 +170,7 @@ function renderInterfaces(
     draft.type === 'kiss-tcp'
       ? `<label class="form-span-2">Host / port<input data-interface-field="hostPort" value="${escapeAttribute(draft.hostPort)}" placeholder="127.0.0.1:8001" aria-label="Host and port" /></label>`
       : draft.type === 'aprs-is' ? `<label>Server / port<input data-interface-field="aprsIsServer" value="${escapeAttribute(draft.aprsIsServer || 'rotate.aprs2.net:14580')}" placeholder="rotate.aprs2.net:14580" /></label><label class="form-span-2">Filters<input data-interface-field="aprsIsFilter" value="${escapeAttribute(draft.aprsIsFilter ?? defaultAprsIsFilter(stationLocation, draft.aprsIsRadius || '25') ?? '')}" maxlength="400" placeholder="r/latitude/longitude/25" /></label><label class="form-span-2">Passcode<input data-interface-field="aprsIsPasscode" type="password" value="${escapeAttribute(draft.aprsIsPasscode || '')}" placeholder="Automatic; enter -1 for receive only" autocomplete="off" /></label><p class="form-span-2 general-muted">Default range uses the saved My Station position; separate filters with spaces.</p><label class="checkbox-field form-span-2"><input data-interface-field="aprsIsIgateRfToIs" type="checkbox" ${draft.aprsIsIgateRfToIs ? 'checked' : ''} /> iGATE RF → APRS-IS</label><label class="checkbox-field form-span-2"><input type="checkbox" disabled /> iGATE APRS-IS → RF</label>` : draft.type === 'kiss-ble' ? `<div class="form-span-2 ble-panel">${draft.bleDeviceId ? `<p class="ble-status">${escapeHtml(draft.bleDeviceName || 'Bluetooth device')} · ${escapeHtml(draft.bleDeviceId)}</p>` : ''}<div class="ble-actions"><button class="outline-button" data-action="ble-scan" type="button">Scan for devices</button><button class="outline-button" data-action="ble-disconnect" type="button" ${selectedInterfaceId ? '' : 'disabled'}>Disconnect</button></div><p class="ble-status" data-ble-status role="status">Start scanning to find devices.</p><label>Devices<select data-ble-devices size="6" aria-label="Bluetooth devices"></select></label><div class="ble-actions"><button class="primary-button" data-action="ble-select" type="button">Connect selected device</button><button class="outline-button" data-action="ble-cancel" type="button">Cancel scan</button></div></div>` : `<label>Serial device<input data-interface-field="serialDevice" value="${escapeAttribute(draft.serialDevice)}" placeholder="/dev/ttyUSB0 or COM3" aria-label="Serial device" /></label><label>Baud rate<select data-interface-field="baudRate" aria-label="Baud rate">${['1200', '2400', '4800', '9600', '19200', '38400', '57600', '115200'].map((rate) => `<option ${draft.baudRate === rate ? 'selected' : ''}>${rate}</option>`).join('')}</select></label>`;
-  return `<div class="interfaces-workspace"><section class="interface-list"><div class="interface-list-header"><span>Interface list</span><button data-action="new-interface" type="button" aria-label="Add interface" title="Add interface"><img src="${plusIcon}" alt="" /></button></div><div class="interface-table-header"><span>Name</span><span>Status</span><span>TX control</span><span>Actions</span></div>${rows}</section><form class="configuration-form interface-form"><div class="form-heading"><h3>${selectedInterfaceId ? 'Edit interface' : 'Add interface'}</h3><span class="type-pill">${draft.type === 'kiss-tcp' ? 'KISS TCP' : draft.type === 'kiss-serial' ? 'KISS Serial' : draft.type === 'aprs-is' ? 'APRS-IS' : 'KISS Bluetooth LE'}</span></div><div class="form-grid"><label>Name<input data-interface-field="name" value="${escapeAttribute(draft.name)}" maxlength="80" aria-label="Interface name" /></label><label>Type<select data-interface-field="type" aria-label="Interface type"><option value="kiss-tcp" ${draft.type === 'kiss-tcp' ? 'selected' : ''}>KISS TCP</option><option value="kiss-serial" ${draft.type === 'kiss-serial' ? 'selected' : ''}>KISS Serial</option><option value="kiss-ble" ${draft.type === 'kiss-ble' ? 'selected' : ''}>KISS Bluetooth LE</option><option value="aprs-is" ${draft.type === 'aprs-is' ? 'selected' : ''}>APRS-IS</option></select></label>${transportFields}<label>Reconnect timeout (s)<input data-interface-field="reconnectTimeout" value="${escapeAttribute(draft.reconnectTimeout)}" inputmode="numeric" aria-label="Reconnect timeout in seconds" /></label><label class="checkbox-field"><input data-interface-field="enabled" type="checkbox" ${draft.enabled ? 'checked' : ''} /> Enabled</label></div><label class="checkbox-field tx-block"><input data-interface-field="txBlocked" type="checkbox" ${draft.txBlocked ? 'checked' : ''} /> Block TX on this interface</label><div class="form-actions"><button class="outline-button" data-action="new-interface" type="button">New interface</button><button class="primary-button" data-action="save-interface" type="button">Save interface</button></div></form></div>`;
+  return `<div class="interfaces-workspace"><section class="interface-list"><div class="interface-list-header"><span>Global hardware interfaces</span><button data-action="new-interface" type="button" aria-label="Add interface" title="Add interface"><img src="${plusIcon}" alt="" /></button></div><div class="interface-table-header"><span>Name</span><span>Status</span><span>TX control</span><span>Actions</span></div>${rows}</section><form class="configuration-form interface-form"><div class="form-heading"><h3>${selectedInterfaceId ? 'Edit interface' : 'Add interface'}</h3><span class="type-pill">${draft.type === 'kiss-tcp' ? 'KISS TCP' : draft.type === 'kiss-serial' ? 'KISS Serial' : draft.type === 'aprs-is' ? 'APRS-IS' : 'KISS Bluetooth LE'}</span></div><div class="form-grid"><label>Name<input data-interface-field="name" value="${escapeAttribute(draft.name)}" maxlength="80" aria-label="Interface name" /></label><label>Type<select data-interface-field="type" aria-label="Interface type"><option value="kiss-tcp" ${draft.type === 'kiss-tcp' ? 'selected' : ''}>KISS TCP</option><option value="kiss-serial" ${draft.type === 'kiss-serial' ? 'selected' : ''}>KISS Serial</option><option value="kiss-ble" ${draft.type === 'kiss-ble' ? 'selected' : ''}>KISS Bluetooth LE</option><option value="aprs-is" ${draft.type === 'aprs-is' ? 'selected' : ''}>APRS-IS</option></select></label>${transportFields}<label>Reconnect timeout (s)<input data-interface-field="reconnectTimeout" value="${escapeAttribute(draft.reconnectTimeout)}" inputmode="numeric" aria-label="Reconnect timeout in seconds" /></label><label class="checkbox-field"><input data-interface-field="enabled" type="checkbox" ${draft.enabled ? 'checked' : ''} /> Enabled for this profile</label></div><label class="checkbox-field tx-block"><input data-interface-field="txBlocked" type="checkbox" ${draft.txBlocked ? 'checked' : ''} /> Block TX for this profile</label><div class="form-actions"><button class="outline-button" data-action="new-interface" type="button">New interface</button><button class="primary-button" data-action="save-interface" type="button">Save interface</button></div></form></div>`;
 }
 
 function escapeHtml(value: string): string {

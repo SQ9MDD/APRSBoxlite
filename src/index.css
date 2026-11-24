@@ -1662,10 +1662,39 @@ button {
   gap: 7px;
   align-items: center;
   color: #c8daec;
-  font-size: 11px;
+  font-size: 14.67px;
   font-weight: 650;
   letter-spacing: 0.2px;
 }
+
+.topbar-profile {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  font-size: 14.67px;
+}
+
+.station-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 760px) minmax(260px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.profile-controls { min-width: 0; max-width: none; }
+@media (max-width: 1200px) {
+  .station-workspace { grid-template-columns: minmax(0, 1fr); }
+}
+.profile-controls > label { display: grid; gap: 7px; }
+.profile-controls select {
+  padding: 8px 10px;
+  border: 1px solid #365571;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+}
+.profile-controls small { display: block; margin-top: 12px; }
 
 .topbar-interfaces {
   display: inline-flex;
@@ -2199,7 +2228,10 @@ button {
 }
 
 .location-picker-dialog {
-  width: min(660px, 100%);
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, 100%);
+  height: min(750px, calc(100vh - 48px));
   padding: 18px;
   border: 1px solid #355a79;
   border-radius: 9px;
@@ -2209,7 +2241,8 @@ button {
 
 .location-picker-map-wrap {
   position: relative;
-  height: 330px;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid #355a79;
   border-radius: 7px;

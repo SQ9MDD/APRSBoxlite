@@ -104,6 +104,11 @@ export function disconnectBle(id: string): void {
   listeners.delete(link.device);
   window.aprsbox.ble.status(id, 'disconnected');
 }
+export function cancelPendingBleTransmissions(): void {
+  // A timed-out GATT write may still be awaiting the OS. Disconnect that link
+  // so its remaining chunks and queued frames cannot reach the next identity.
+  for (const [id, link] of links) if (link.pendingWrites) disconnectBle(id);
+}
 export async function transmitBle(id: string, bytes: Uint8Array): Promise<void> {
   const link = links.get(id);
   if (!link || link.stopped || !link.characteristic || !link.device.gatt?.connected) throw new Error('Bluetooth is not connected.');

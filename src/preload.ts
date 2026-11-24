@@ -34,7 +34,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
     },
   },
   messages: {
-    saveGroups: (groups: { rf: string[]; aprsIs: string[] }): Promise<void> => ipcRenderer.invoke('config:save-message-groups', groups),
+    saveGroups: (groups: { rf: string[]; aprsIs: string[] }, profileId: string): Promise<void> => ipcRenderer.invoke('config:save-message-groups', groups, profileId),
     get: (): Promise<AprsMessage[]> => ipcRenderer.invoke('messages:get'),
     markRead: (recipient: string): Promise<void> => ipcRenderer.invoke('messages:mark-read', recipient),
     deleteConversation: (recipient: string): Promise<void> => ipcRenderer.invoke('messages:delete-conversation', recipient),
@@ -43,9 +43,9 @@ contextBridge.exposeInMainWorld('aprsbox', {
       text: string;
       interfaceId: string;
       path: string;
-    }): Promise<void> => ipcRenderer.invoke('messages:send', message),
-    retry: (id: string): Promise<void> =>
-      ipcRenderer.invoke('messages:retry', id),
+    }, profileId: string): Promise<void> => ipcRenderer.invoke('messages:send', message, profileId),
+    retry: (id: string, profileId: string): Promise<void> =>
+      ipcRenderer.invoke('messages:retry', id, profileId),
     onChanged: (callback: (messages: AprsMessage[]) => void): (() => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,
@@ -67,13 +67,19 @@ contextBridge.exposeInMainWorld('aprsbox', {
     },
   },
   config: {
+    profileAction: (action: import('./stationProfiles').ProfileAction, profileId: string, station: import('./stationProfiles').StationSettings): Promise<Record<string, unknown>> => ipcRenderer.invoke('config:profile-action', action, profileId, station),
+    onRuntimeChanged: (callback: (configuration: Record<string, unknown>) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, configuration: Record<string, unknown>) => callback(configuration);
+      ipcRenderer.on('config:runtime-changed', listener);
+      return () => ipcRenderer.removeListener('config:runtime-changed', listener);
+    },
     saveClockMode: (mode: 'utc' | 'local') => ipcRenderer.invoke('config:save-clock-mode', mode),
     openMapProviders: (): Promise<void> => ipcRenderer.invoke('config:open-map-providers'),
     getMapCacheStats: (id: string): Promise<{ count: number; bytes: number }> => ipcRenderer.invoke('map:cache-stats', id),
     clearMapCache: (id: string): Promise<void> => ipcRenderer.invoke('map:clear-cache', id),
     saveMapSettings: (settings: import('./mapSettings').MapSettings) => ipcRenderer.invoke('config:save-map-settings', settings),
-    saveMessageInterface: (id: string) => ipcRenderer.invoke('config:save-message-interface', id),
-    saveMessagePath: (recipient: string, path: string) => ipcRenderer.invoke('config:save-message-path', recipient, path),
+    saveMessageInterface: (id: string, profileId: string) => ipcRenderer.invoke('config:save-message-interface', id, profileId),
+    saveMessagePath: (recipient: string, path: string, profileId: string) => ipcRenderer.invoke('config:save-message-path', recipient, path, profileId),
     updateTocalls: (): Promise<{ count: number; generationTime?: string }> => ipcRenderer.invoke('tocall:update'),
     exportBackup: (): Promise<boolean> => ipcRenderer.invoke('config:export-backup'),
     importBackup: (): Promise<boolean> => ipcRenderer.invoke('config:import-backup'),
@@ -104,8 +110,8 @@ contextBridge.exposeInMainWorld('aprsbox', {
       symbolOverlay: string;
       beaconPath: string;
       beaconInterfaceId: string;
-    }): Promise<{ path: string; storage: 'portable' | 'userData' }> =>
-      ipcRenderer.invoke('config:save-station', station),
+    }, profileId: string): Promise<{ path: string; storage: 'portable' | 'userData' }> =>
+      ipcRenderer.invoke('config:save-station', station, profileId),
     sendBeacon: (station: {
       callsign: string;
       ssid: string;
@@ -119,7 +125,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
       symbolOverlay: string;
       beaconPath: string;
       beaconInterfaceId: string;
-    }): Promise<{ sent: string[]; failed: string[] }> => ipcRenderer.invoke('station:send-beacon', station),
+    }, profileId: string): Promise<{ sent: string[]; failed: string[] }> => ipcRenderer.invoke('station:send-beacon', station, profileId),
     saveInterfaces: (
       interfaces: Array<{
         id: string;
@@ -140,8 +146,9 @@ contextBridge.exposeInMainWorld('aprsbox', {
         aprsIsPasscode?: string;
   aprsIsIgateRfToIs?: boolean;
       }>,
+      profileId: string,
     ): Promise<{ path: string; storage: 'portable' | 'userData' }> =>
-      ipcRenderer.invoke('config:save-interfaces', interfaces),
+      ipcRenderer.invoke('config:save-interfaces', interfaces, profileId),
   },
   traffic: {
     saveLog: (filter: string): Promise<boolean> => ipcRenderer.invoke('traffic:save-log', filter),

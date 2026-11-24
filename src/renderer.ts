@@ -1,10 +1,12 @@
+import { DEFAULT_STATION, profileLabel, type StationProfile, type ProfileAction } from './stationProfiles';
+import { renderProfileDialog, type ProfileDialog } from './views/StationProfilesView';
 import { normalizeMessageGroups, readMessageGroups } from './messageGroups';
 import { defaultAprsIsFilter } from './aprsIsFilter';
 import './index.css';
 import { installTooltips } from './components/Tooltips';
 
 installTooltips();
-import { scanBle, cancelBleScan, disconnectBle, reconcileBle, noteBleDevices, isBleScanning, isAnyBleScanning, hasBleLink, transmitBle } from './bleTransport';
+import { scanBle, cancelBleScan, cancelPendingBleTransmissions, disconnectBle, reconcileBle, noteBleDevices, isBleScanning, isAnyBleScanning, hasBleLink, transmitBle } from './bleTransport';
 import { createAlertDialog } from './components/AlertDialog';
 import type { AlertMessage } from './components/AlertDialog';
 import { createConfirmDialog } from './components/ConfirmDialog';
@@ -153,22 +155,19 @@ function updateBleDevices(): void {
 let themeMode: ThemeMode = 'system';
 let beaconSending = false;
 let mapMaskOpacity = { light: 10, dark: 20 };
-let stationSettings: StationSettings = {
-  callsign: 'N0LIC',
-  ssid: '-0',
-  location: '50.0619, 19.9383',
-  comment: 'APRSBox Lite station',
-  status: 'Monitoring APRS traffic',
-  beaconInterval: '15 minutes',
-  statusInterval: '30 minutes',
-  symbolTable: '/',
-  symbolCode: '>',
-  symbolOverlay: '',
-  beaconPath: '',
-  beaconInterfaceId: '',
+let stationSettings: StationSettings = { ...DEFAULT_STATION };
+let stationProfiles: StationProfile[] = [];
+let activeProfileId = '';
+let profileBusy = false;
+let profileDialog: ProfileDialog | undefined;
+const activeProfile = () => stationProfiles.find((profile) => profile.id === activeProfileId);
+const activeProfileLabel = () => {
+  const index = stationProfiles.findIndex((profile) => profile.id === activeProfileId);
+  return stationProfiles.length > 1 && index >= 0 ? profileLabel(stationProfiles[index], index) : '';
 };
 let alertMessage: AlertMessage | undefined;
 let confirmation: Confirmation | undefined;
+let pendingProfileSwitch: string | undefined;
 let pendingInterfaceDeletion: InterfaceSettings | undefined;
 let pendingConversationDeletion: string | undefined;
 let phgCalculatorOpen = false;
@@ -266,6 +265,7 @@ function applyStoredStationConfiguration(
   ) {
     return;
   }
+  stationSettings = { ...DEFAULT_STATION };
   const stored = station as Partial<StationSettings>;
   const keys: Array<keyof StationSettings> = [
     'callsign',
@@ -290,6 +290,83 @@ function applyStoredInterfaces(configuration: Record<string, unknown>): void {
   if (!Array.isArray(configuration.interfaces)) return;
   interfaces = configuration.interfaces.filter(isInterfaceSettings);
   reconcileBle(interfaces);
+}
+
+function applyProfileConfiguration(configuration: Record<string, unknown>, force = false): void {
+  const changed = activeProfileId !== configuration.activeProfileId;
+  if (changed) cancelPendingBleTransmissions();
+  stationProfiles = configuration.profiles as StationProfile[];
+  activeProfileId = configuration.activeProfileId as string;
+  applyStoredInterfaces(configuration);
+  if (changed || force) {
+    for (const timer of messagePathTimers.values()) clearTimeout(timer);
+    messagePathTimers.clear();
+    modifiedMessagePaths.clear();
+    messagePaths = {};
+    messageInterfaceChanged = false;
+    messageInterfaceId = typeof configuration.messageInterfaceId === 'string' ? configuration.messageInterfaceId : '';
+    try { messageGroups = readMessageGroups(configuration.messageGroups); } catch { messageGroups = readMessageGroups(undefined); }
+    if (configuration.messagePaths && typeof configuration.messagePaths === 'object') {
+      for (const [recipient, path] of Object.entries(configuration.messagePaths)) {
+        if (typeof path === 'string') messagePaths[recipient] = path;
+      }
+    }
+    applyStoredStationConfiguration(configuration);
+    const phg = stationSettings.comment.match(/^PHG(\d)(\d)(\d)(\d)/);
+    phgValues = phg ? { power: phg[1], height: phg[2], gain: phg[3], direction: phg[4] } : { power: '5', height: '3', gain: '2', direction: '0' };
+    phgCalculatorOpen = false;
+    locationPickerOpen = false;
+    locationAccuracy = undefined;
+    selectedInterfaceId = undefined;
+    interfaceDraft = createInterfaceDraft();
+    bleAutoTarget = undefined;
+    blePendingSelection.clear();
+  }
+}
+
+window.aprsbox.config.onRuntimeChanged((configuration) => {
+  const changed = activeProfileId !== configuration.activeProfileId;
+  if (changed) applyProfileConfiguration(configuration);
+  else {
+    const previous = activeProfile();
+    stationProfiles = configuration.profiles as StationProfile[];
+    if (previous?.station.callsign !== activeProfile()?.station.callsign || previous?.station.ssid !== activeProfile()?.station.ssid)
+      cancelPendingBleTransmissions();
+    applyStoredInterfaces(configuration);
+  }
+  if (changed) renderApp();
+  else {
+    updateTopbarInterfaceStatuses();
+    const name = appRoot.querySelector<HTMLElement>('.topbar-profile');
+    if (name) { name.textContent = activeProfileLabel(); name.title = `Active profile: ${name.textContent}`; name.hidden = !name.textContent; }
+    const callsign = appRoot.querySelector<HTMLElement>('.topbar-callsign');
+    const station = activeProfile()?.station;
+    if (callsign && station) callsign.textContent = station.callsign ? (station.callsign + station.ssid).replace(/-0$/, '') : 'No callsign';
+  }
+});
+
+async function changeProfile(action: ProfileAction): Promise<void> {
+  if (profileBusy) return;
+  profileBusy = true;
+  profileDialog = undefined;
+  confirmation = undefined;
+  renderApp();
+  try {
+    // Flush debounced conversation paths to the outgoing profile before switching.
+    for (const [recipient, timer] of messagePathTimers) {
+      clearTimeout(timer);
+      await window.aprsbox.config.saveMessagePath(recipient, messagePaths[recipient] ?? '', activeProfileId);
+    }
+    messagePathTimers.clear();
+    const configuration = await window.aprsbox.config.profileAction(action, activeProfileId, stationSettings);
+    if (action.action === 'rename') stationProfiles = configuration.profiles as StationProfile[];
+    else applyProfileConfiguration(configuration, true);
+  } catch (error) {
+    alertMessage = { title: 'Profile not changed', message: error instanceof Error ? error.message : String(error), tone: 'error' };
+  } finally {
+    profileBusy = false;
+    renderApp();
+  }
 }
 
 function isInterfaceSettings(value: unknown): value is InterfaceSettings {
@@ -368,8 +445,7 @@ async function loadConfiguration(): Promise<void> {
       }
     }
     applyTheme();
-    applyStoredStationConfiguration(configuration);
-    applyStoredInterfaces(configuration);
+    applyProfileConfiguration(configuration);
     try { messageGroups = readMessageGroups(configuration.messageGroups); } catch { messageGroups = readMessageGroups(undefined); }
     if (!messageInterfaceChanged && typeof configuration.messageInterfaceId === 'string') messageInterfaceId = configuration.messageInterfaceId;
     if (configuration.messagePaths && typeof configuration.messagePaths === 'object' && !Array.isArray(configuration.messagePaths)) {
@@ -487,7 +563,10 @@ window.aprsbox.traffic.onInterfaceStatus(({ interfaceId, status }) => {
 
 function updateTopbarInterfaceStatuses(): void {
   const container = appRoot.querySelector<HTMLElement>('.topbar-interfaces');
-  if (container) container.innerHTML = renderInterfaceStatusIcons(interfaces, interfaceStatuses);
+  if (container) {
+    container.innerHTML = renderInterfaceStatusIcons(interfaces, interfaceStatuses);
+    if (profileBusy) container.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+  }
 }
 
 colorScheme.addEventListener('change', () => {
@@ -583,6 +662,8 @@ const pageRenderers: Record<
       phgValues,
       mapSettings,
       mapSourceDraft,
+      stationProfiles,
+      activeProfileId,
     ),
 };
 
@@ -730,7 +811,7 @@ async function toggleInterface(id: string): Promise<void> {
   interfaceTogglePending = true;
   const nextInterfaces = interfaces.map((item) => item.id === id ? { ...item, enabled: !item.enabled } : item);
   try {
-    await window.aprsbox.config.saveInterfaces(nextInterfaces);
+    await window.aprsbox.config.saveInterfaces(nextInterfaces, activeProfileId);
     interfaces = nextInterfaces;
     reconcileBle(interfaces);
     const updated = interfaces.find((item) => item.id === id);
@@ -916,7 +997,7 @@ appRoot.addEventListener('click', (event) => {
   const retry = event.target.closest<HTMLButtonElement>('[data-retry-message]');
   if (retry?.dataset.retryMessage) {
     void window.aprsbox.messages
-      .retry(retry.dataset.retryMessage)
+      .retry(retry.dataset.retryMessage, activeProfileId)
       .catch((error) => {
         const output = appRoot.querySelector<HTMLElement>(
           '[data-message-error]',
@@ -994,6 +1075,11 @@ appRoot.addEventListener('keydown', (event) => {
 appRoot.addEventListener('submit', (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
+  if (form.matches('[data-profile-dialog]')) {
+    event.preventDefault();
+    if (profileDialog) void changeProfile({ action: profileDialog.action, id: activeProfileId, name: profileDialog.name });
+    return;
+  }
   if (form.matches('[data-map-source-form]')) {
     event.preventDefault();
     const values = new FormData(form);
@@ -1013,7 +1099,7 @@ appRoot.addEventListener('submit', (event) => {
       const next = { rf: normalizeMessageGroups(String(values.get('rf') ?? '')), aprsIs: normalizeMessageGroups(String(values.get('aprsIs') ?? '')) };
       const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
       if (button) button.disabled = true;
-      void window.aprsbox.messages.saveGroups(next).then(() => {
+      void window.aprsbox.messages.saveGroups(next, activeProfileId).then(() => {
         messageGroups = next;
         const rf = form.querySelector<HTMLInputElement>('[name="rf"]');
         const aprsIs = form.querySelector<HTMLInputElement>('[name="aprsIs"]');
@@ -1058,7 +1144,7 @@ appRoot.addEventListener('submit', (event) => {
   if (submit) submit.disabled = true;
   if (output) output.textContent = '';
   void window.aprsbox.messages
-    .send(request)
+    .send(request, activeProfileId)
     .then(() => {
       const input = form.querySelector<HTMLTextAreaElement>(
         'textarea[name="text"]',
@@ -1140,7 +1226,39 @@ function renderApp(): void {
   mountedLocationPicker = undefined;
   const resolvedTheme =
     document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
-  appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView, messages.some((message) => message.unread))}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, activeSettingsSection, `${stationSettings.callsign}${stationSettings.ssid}`, mapMaskOpacity[resolvedTheme], detailCallsign ? '' : renderStationFilters(liveStations, stationsViewState.filter), interfaces, interfaceStatuses, activeView === 'traffic' ? renderTrafficFilter(trafficFrames, trafficFilter) : '', activeView === 'stations' && !detailCallsign ? renderStationSearch(liveStations, stationsViewState) : '')}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}`;
+  appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView, messages.some((message) => message.unread))}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, activeSettingsSection, activeProfile()?.station.callsign ? `${activeProfile()!.station.callsign}${activeProfile()!.station.ssid}` : 'No callsign', mapMaskOpacity[resolvedTheme], detailCallsign ? '' : renderStationFilters(liveStations, stationsViewState.filter), interfaces, interfaceStatuses, activeView === 'traffic' ? renderTrafficFilter(trafficFrames, trafficFilter) : '', activeView === 'stations' && !detailCallsign ? renderStationSearch(liveStations, stationsViewState) : '', activeProfileLabel())}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}${renderProfileDialog(profileDialog)}`;
+  if (profileBusy) appRoot.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>('.settings-view input, .settings-view select, .settings-view button, [data-action="send-beacon"], [data-topbar-interface]').forEach((control) => { control.disabled = true; });
+  appRoot.querySelector<HTMLSelectElement>('[data-profile-select]')?.addEventListener('change', (event) => {
+    const id = (event.currentTarget as HTMLSelectElement).value;
+    const index = stationProfiles.findIndex((profile) => profile.id === id);
+    if (id === activeProfileId || index < 0) return;
+    pendingProfileSwitch = id;
+    confirmation = { kind: 'switch-profile', title: 'Switch profile?', message: `Switch to ${profileLabel(stationProfiles[index], index)}? Pending transmissions will be cancelled.` };
+    renderApp();
+  });
+  appRoot.querySelectorAll<HTMLButtonElement>('[data-profile-action]').forEach((button) => button.addEventListener('click', () => {
+    if (profileBusy) return;
+    const action = button.dataset.profileAction as ProfileAction['action'];
+    if (action === 'delete') {
+      confirmation = { kind: 'profile', title: 'Delete profile?', message: `Delete “${activeProfileLabel() || activeProfile()?.name}”? Another profile will become active. Hardware interfaces are kept.` };
+    } else if (action === 'create' || action === 'duplicate' || action === 'rename') {
+      profileDialog = { action, name: action === 'create' ? '' : action === 'duplicate' ? `${activeProfile()?.name} copy` : activeProfile()?.name ?? '' };
+    }
+    renderApp();
+    appRoot.querySelector<HTMLInputElement>('[data-profile-name]')?.focus();
+  }));
+  appRoot.querySelector<HTMLInputElement>('[data-profile-name]')?.addEventListener('input', (event) => {
+    if (profileDialog) profileDialog.name = (event.currentTarget as HTMLInputElement).value;
+  });
+  appRoot.querySelector('[data-action="cancel-profile-dialog"]')?.addEventListener('click', () => { profileDialog = undefined; renderApp(); });
+  appRoot.querySelector('[data-action="cancel-delete-profile"]')?.addEventListener('click', () => { confirmation = undefined; renderApp(); });
+  appRoot.querySelector('[data-action="cancel-switch-profile"]')?.addEventListener('click', () => { pendingProfileSwitch = undefined; confirmation = undefined; renderApp(); });
+  appRoot.querySelector('[data-action="confirm-switch-profile"]')?.addEventListener('click', () => {
+    const id = pendingProfileSwitch;
+    pendingProfileSwitch = undefined;
+    if (id) void changeProfile({ action: 'select', id });
+  });
+  appRoot.querySelector('[data-action="confirm-delete-profile"]')?.addEventListener('click', () => { void changeProfile({ action: 'delete', id: activeProfileId }); });
   updateSidebarClock();
   updateBleDevices();
   if (activeView === 'messages' && messageRecipient) {
@@ -1149,11 +1267,12 @@ function renderApp(): void {
   }
   const pathInput = appRoot.querySelector<HTMLInputElement>('[data-message-send] input[name="path"]');
   const pathRecipient = messageRecipient;
+  const pathProfileId = activeProfileId;
   if (pathInput && pathRecipient) {
     const savePath = () => {
       clearTimeout(messagePathTimers.get(pathRecipient));
       messagePathTimers.delete(pathRecipient);
-      void window.aprsbox.config.saveMessagePath(pathRecipient, messagePaths[pathRecipient] ?? '').catch((error) => {
+      void window.aprsbox.config.saveMessagePath(pathRecipient, messagePaths[pathRecipient] ?? '', pathProfileId).catch((error) => {
         const output = appRoot.querySelector<HTMLElement>('[data-message-error]');
         if (output && messageRecipient === pathRecipient) output.textContent = `Could not save path: ${String(error)}`;
       });
@@ -1169,7 +1288,7 @@ function renderApp(): void {
   appRoot.querySelector<HTMLSelectElement>('[data-message-send] select[name="interfaceId"]')?.addEventListener('change', (event) => {
     messageInterfaceId = (event.currentTarget as HTMLSelectElement).value;
     messageInterfaceChanged = true;
-    void window.aprsbox.config.saveMessageInterface(messageInterfaceId).catch((error) => {
+    void window.aprsbox.config.saveMessageInterface(messageInterfaceId, activeProfileId).catch((error) => {
       const output = appRoot.querySelector<HTMLElement>('[data-message-error]');
       if (output) output.textContent = `Could not save interface selection: ${String(error)}`;
     });
@@ -1336,7 +1455,7 @@ function renderApp(): void {
       appRoot.querySelectorAll<HTMLButtonElement>('[data-action="send-beacon"]')
         .forEach((control) => { control.disabled = true; });
       try {
-        const result = await window.aprsbox.config.sendBeacon({ ...stationSettings });
+        const result = await window.aprsbox.config.sendBeacon({ ...stationSettings }, activeProfileId);
         alertMessage = {
           title: result.failed.length ? 'Beacon partially sent' : 'Beacon sent',
           message: `Sent: ${result.sent.join(', ')}.${result.failed.length ? ` Failed: ${result.failed.join('; ')}` : ''}`,
@@ -1377,7 +1496,7 @@ function renderApp(): void {
             )
           : [...interfaces, savedInterface];
         try {
-          await window.aprsbox.config.saveInterfaces(nextInterfaces);
+          await window.aprsbox.config.saveInterfaces(nextInterfaces, activeProfileId);
           interfaces = nextInterfaces;
           reconcileBle(interfaces);
           selectedInterfaceId = savedInterface.id;
@@ -1448,7 +1567,7 @@ function renderApp(): void {
           (item) => item.id !== deletedId,
         );
         try {
-          await window.aprsbox.config.saveInterfaces(nextInterfaces);
+          await window.aprsbox.config.saveInterfaces(nextInterfaces, activeProfileId);
           interfaces = nextInterfaces;
           reconcileBle(interfaces);
           if (selectedInterfaceId === deletedId) {
@@ -1506,7 +1625,7 @@ function renderApp(): void {
     .forEach((button) =>
       button.addEventListener('click', async () => {
         try {
-          await window.aprsbox.config.saveStation(stationSettings);
+          await window.aprsbox.config.saveStation(stationSettings, activeProfileId);
           alertMessage = {
             title: 'Station saved',
             message:
