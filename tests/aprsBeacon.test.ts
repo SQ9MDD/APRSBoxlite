@@ -97,3 +97,12 @@ test('attempts every selected interface even if one fails', async () => {
   assert.equal(result.failed[0].error, 'Disconnected');
   await assert.rejects(transmitBeacon(items, frame, async () => { throw new Error('Offline'); }), /Offline/);
 });
+
+test('encodes an APRS status with the configured callsign and path', async () => {
+  const { encodeStatus } = await import('../src/main/aprsBeacon.ts');
+  assert.deepEqual(new KissFrameDecoder().consume(encodeStatus({ ...station, status: 'On air' })), [
+    'SQ9MDD-8>APBOX1,WIDE1-1,WIDE2-1:>On air',
+  ]);
+  assert.throws(() => encodeStatus({ ...station, status: '  ' }));
+  assert.throws(() => encodeStatus({ ...station, status: 'żółć' }));
+});

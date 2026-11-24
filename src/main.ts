@@ -8,12 +8,13 @@ import { mkdirSync } from 'node:fs';
 import { StationStore } from './main/stationStore';
 import { MessageService } from './main/aprsMessages';
 import { MessageStorage } from './main/messageStorage';
-import { encodeBeacon, selectBeaconInterfaces, transmitBeacon } from './main/aprsBeacon';
+import { encodeBeacon, encodeStatus, selectBeaconInterfaces, transmitBeacon } from './main/aprsBeacon';
 import { classifyTraffic } from './main/trafficColors';
 import type { Station, AprsMessage } from './types';
 import { ConfigStorage, getApplicationDirectory, atomicWriteJson } from './main/configStorage';
 import { DEFAULT_MAP_SETTINGS, validateMapSettings } from './mapSettings';
 import { MapTileCache } from './main/mapTileCache';
+import { createStatusScheduler } from './main/statusScheduler';
 import { createConfigurationBackup, readConfigurationBackup } from './main/configBackup';
 import { filterTrafficFrames, formatTrafficLog, trafficLogFilename } from './trafficLog';
 import { KissSerialRxService } from './main/kissSerialRx';
@@ -128,6 +129,7 @@ let aprsIsRxService: AprsIsRxService;
 let messageService: MessageService;
 let messageStorage: MessageStorage | undefined;
 let beaconTimer: ReturnType<typeof setTimeout> | undefined;
+let statusScheduler: ReturnType<typeof createStatusScheduler> | undefined;
 const stationStore = new StationStore((stations) =>
   broadcast('stations:changed', stations),
 );
@@ -422,6 +424,7 @@ app.whenReady().then(async () => {
     kissTcpRxService.reconnectAfterResume();
     kissSerialRxService.reconnectAfterResume();
     aprsIsRxService.reconnectAfterResume();
+    statusScheduler?.schedule();
     notifyPower('system:resume');
   });
   messageService = new MessageService(
@@ -523,6 +526,22 @@ app.whenReady().then(async () => {
     if (result.failed.length) console.warn('Beacon not sent on some interfaces:', result.failed.map(({ interface: item, error }) => `${item.name || item.id}: ${error}`).join('; '));
     return { sent: result.sent.map((item) => item.name || item.id), failed: result.failed.map(({ interface: item, error }) => `${item.name || item.id}: ${error}`) };
   };
+  statusScheduler = createStatusScheduler(
+    () => {
+      try { return validateStationConfiguration(configStorage.getConfiguration().station); }
+      catch { return { callsign: '', status: '', statusInterval: 'Never' }; }
+    },
+    async () => {
+      const station = validateStationConfiguration(configStorage.getConfiguration().station);
+      const statuses = kissStatuses();
+      const targets = selectBeaconInterfaces(validateInterfaces(configStorage.getConfiguration().interfaces ?? []), station.beaconInterfaceId, (item) =>
+        statuses[item.id] === 'connected' && (item.type !== 'aprs-is' || aprsIsRxService.canTransmit(item.id)),
+      );
+      const result = await transmitBeacon(targets, encodeStatus(station), transmitKiss);
+      if (result.failed.length) console.warn('Status not sent on some interfaces:', result.failed.map(({ interface: item, error }) => `${item.name || item.id}: ${error}`).join('; '));
+    },
+  );
+  statusScheduler.schedule();
   const scheduleBeacon = (retry = false) => {
     clearTimeout(beaconTimer);
     let station: StationConfiguration;
@@ -550,6 +569,7 @@ app.whenReady().then(async () => {
     updateConfig({ station: validateStationConfiguration(station) }).then((location) => {
       aprsIsRxService.configure(validateInterfaces(configStorage.getConfiguration().interfaces ?? []), configStorage.getConfiguration().station as { callsign?: unknown; ssid?: unknown; location?: unknown } | undefined, getMessageGroups().aprsIs);
       scheduleBeacon();
+      statusScheduler?.schedule();
       return location;
     }),
   );
@@ -572,6 +592,10 @@ app.whenReady().then(async () => {
     return updateConfig({ scrollerVisible: visible });
   });
   ipcMain.handle('config:open-map-providers', () => shell.openExternal('https://switch2osm.org/providers/#Allows-free-usage'));
+  ipcMain.handle('config:save-clock-mode', (_event, value: unknown) => {
+    if (value !== 'utc' && value !== 'local') throw new Error('Invalid clock mode.');
+    return updateConfig({ clockMode: value });
+  });
   ipcMain.handle('config:save-map-settings', (_event, value: unknown) =>
     updateConfig({ mapSettings: validateMapSettings(value) }),
   );
@@ -679,6 +703,7 @@ app.whenReady().then(async () => {
     await write;
     configureKiss(interfaces);
     scheduleBeacon();
+    statusScheduler?.schedule();
     return true;
   });
   ipcMain.handle('traffic:get-recent', () => kissHistory());
@@ -763,6 +788,7 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   quitting = true;
   clearTimeout(beaconTimer);
+  statusScheduler?.dispose();
   kissTcpRxService?.stop();
   kissSerialRxService?.stop();
   aprsIsRxService?.stop();

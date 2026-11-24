@@ -1,6 +1,9 @@
 import { normalizeMessageGroups, readMessageGroups } from './messageGroups';
 import { defaultAprsIsFilter } from './aprsIsFilter';
 import './index.css';
+import { installTooltips } from './components/Tooltips';
+
+installTooltips();
 import { scanBle, cancelBleScan, disconnectBle, reconcileBle, noteBleDevices, isBleScanning, isAnyBleScanning, hasBleLink, transmitBle } from './bleTransport';
 import { createAlertDialog } from './components/AlertDialog';
 import type { AlertMessage } from './components/AlertDialog';
@@ -48,6 +51,24 @@ if (!root) throw new Error('Could not find the app root element.');
 const appRoot = root;
 
 let activeView: AppView = 'map';
+let clockMode: 'utc' | 'local' = 'utc';
+let clockModeChanged = false;
+function updateSidebarClock(): void {
+  const clock = appRoot.querySelector<HTMLElement>('[data-action="toggle-clock"]');
+  if (!clock) return;
+  const now = new Date();
+  const utc = clockMode === 'utc';
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const time = clock.querySelector<HTMLElement>('[data-clock-time]');
+  const date = clock.querySelector<HTMLElement>('[data-clock-date]');
+  const zone = clock.querySelector<HTMLElement>('[data-clock-zone]');
+  if (time) time.textContent = [utc ? now.getUTCHours() : now.getHours(), utc ? now.getUTCMinutes() : now.getMinutes(), utc ? now.getUTCSeconds() : now.getSeconds()].map(pad).join(':');
+  if (date) date.textContent = [utc ? now.getUTCFullYear() : now.getFullYear(), pad((utc ? now.getUTCMonth() : now.getMonth()) + 1), pad(utc ? now.getUTCDate() : now.getDate())].join('.');
+  if (zone) zone.textContent = utc ? 'UTC' : 'LOC';
+  clock.title = utc ? 'UTC (click for LOC)' : 'LOC (click for UTC)';
+  clock.setAttribute('aria-label', utc ? 'UTC clock; switch to local time' : 'Local clock; switch to UTC');
+}
+setInterval(updateSidebarClock, 1000);
 let selectedCallsign: string | undefined;
 let detailCallsign: string | undefined;
 const stationsViewState: StationsViewState = { filter: 'all', sort: 'lastHeard', direction: 'desc', search: '' };
@@ -324,6 +345,7 @@ async function updateMapCacheStats(id: string): Promise<void> {
 async function loadConfiguration(): Promise<void> {
   try {
     const configuration = await window.aprsbox.config.get();
+    if (!clockModeChanged && (configuration.clockMode === 'utc' || configuration.clockMode === 'local')) clockMode = configuration.clockMode;
     if (configuration.mapSettings !== undefined) {
       try { mapSettings = validateMapSettings(configuration.mapSettings); } catch { /* Keep the default source if saved settings are invalid. */ }
     }
@@ -702,8 +724,42 @@ function receiveStations(stations: Station[]): void {
   }
 }
 
+let interfaceTogglePending = false;
+async function toggleInterface(id: string): Promise<void> {
+  if (interfaceTogglePending || !interfaces.some((item) => item.id === id)) return;
+  interfaceTogglePending = true;
+  const nextInterfaces = interfaces.map((item) => item.id === id ? { ...item, enabled: !item.enabled } : item);
+  try {
+    await window.aprsbox.config.saveInterfaces(nextInterfaces);
+    interfaces = nextInterfaces;
+    reconcileBle(interfaces);
+    const updated = interfaces.find((item) => item.id === id);
+    if (updated && selectedInterfaceId === id && interfaceDraft.id === id) interfaceDraft = { ...interfaceDraft, enabled: updated.enabled };
+  } catch (error) {
+    alertMessage = { title: 'Update failed', message: error instanceof Error ? error.message : 'The interface state could not be saved.', tone: 'error' };
+  } finally {
+    interfaceTogglePending = false;
+    renderApp();
+  }
+}
+
 appRoot.addEventListener('click', (event) => {
   if (!(event.target instanceof Element)) return;
+  if (event.target.closest('[data-action="toggle-clock"]')) {
+    clockModeChanged = true;
+    clockMode = clockMode === 'utc' ? 'local' : 'utc';
+    updateSidebarClock();
+    void window.aprsbox.config.saveClockMode(clockMode).catch(console.error);
+    return;
+  }
+  const topbarInterface = event.target.closest<HTMLButtonElement>('[data-topbar-interface]');
+  if (topbarInterface?.dataset.topbarInterface) {
+    if (!interfaceTogglePending) {
+      topbarInterface.disabled = true;
+      void toggleInterface(topbarInterface.dataset.topbarInterface);
+    }
+    return;
+  }
   const saveLog = event.target.closest<HTMLButtonElement>('[data-action="save-traffic-log"]');
   if (saveLog) {
     if (savingTrafficLog) return;
@@ -1085,6 +1141,7 @@ function renderApp(): void {
   const resolvedTheme =
     document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
   appRoot.innerHTML = `<div class="app-shell">${createSidebar(activeView, messages.some((message) => message.unread))}<div class="workspace">${createTopbar(activeView, mapTools, themeMode, activeSettingsSection, `${stationSettings.callsign}${stationSettings.ssid}`, mapMaskOpacity[resolvedTheme], detailCallsign ? '' : renderStationFilters(liveStations, stationsViewState.filter), interfaces, interfaceStatuses, activeView === 'traffic' ? renderTrafficFilter(trafficFrames, trafficFilter) : '', activeView === 'stations' && !detailCallsign ? renderStationSearch(liveStations, stationsViewState) : '')}<main class="content-area"><section class="view-region" aria-live="polite">${page.html}</section>${mapDrawer}</main></div></div>${locationPickerOpen && locationPickerCenter ? createLocationPicker(locationPickerCenter) : ''}${createAlertDialog(alertMessage)}${createConfirmDialog(confirmation)}`;
+  updateSidebarClock();
   updateBleDevices();
   if (activeView === 'messages' && messageRecipient) {
     const history = appRoot.querySelector<HTMLElement>('[data-message-history]');
@@ -1347,30 +1404,9 @@ function renderApp(): void {
     );
   appRoot
     .querySelectorAll<HTMLButtonElement>('[data-action="toggle-interface"]')
-    .forEach((button) =>
-      button.addEventListener('click', async () => {
-        const id = button.dataset.interfaceId;
-        const nextInterfaces = interfaces.map((item) =>
-          item.id === id ? { ...item, enabled: !item.enabled } : item,
-        );
-        try {
-          await window.aprsbox.config.saveInterfaces(nextInterfaces);
-          interfaces = nextInterfaces;
-          reconcileBle(interfaces);
-          const selected = interfaces.find(
-            (item) => item.id === selectedInterfaceId,
-          );
-          if (selected) interfaceDraft = { ...selected };
-        } catch {
-          alertMessage = {
-            title: 'Update failed',
-            message: 'The interface state could not be saved.',
-            tone: 'error',
-          };
-        }
-        renderApp();
-      }),
-    );
+    .forEach((button) => button.addEventListener('click', () => {
+      if (button.dataset.interfaceId) void toggleInterface(button.dataset.interfaceId);
+    }));
   appRoot
     .querySelectorAll<HTMLButtonElement>(
       '[data-action="request-delete-interface"]',

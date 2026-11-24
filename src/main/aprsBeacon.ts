@@ -53,6 +53,12 @@ export function encodeBeacon(station: BeaconSettings): Uint8Array {
   );
 }
 
+export function encodeStatus(station: Pick<BeaconSettings, 'callsign' | 'ssid' | 'beaconPath'> & { status: string }): Uint8Array {
+  const status = station.status.trim();
+  if (!status || status.length > 62 || !/^[\x20-\x7e]+$/.test(status)) throw new Error('Invalid APRS status.');
+  return encodeKissFrame(`${station.callsign}${station.ssid}`, `>${status}`, station.beaconPath);
+}
+
 export interface BeaconInterface {
   id: string;
   name: string;

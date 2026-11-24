@@ -111,9 +111,9 @@ export function renderInterfaceStatusIcons(
     const status = !item.enabled ? 'disabled' : statuses[item.id] ?? 'disconnected';
     const name = item.name || (item.type === 'kiss-tcp' ? item.hostPort : item.type === 'aprs-is' ? item.aprsIsServer : item.type === 'kiss-ble' ? item.bleDeviceName : item.serialDevice) || item.id;
     const presentation = interfacePresentation[item.type];
-    const label = `${name} · ${presentation.label} · ${status}`;
+    const label = `${name} · ${presentation.label} · ${status} · ${item.enabled ? 'Disable' : 'Enable'} interface`;
     const icon = presentation.icon.replace('<svg ', '<svg aria-hidden="true" focusable="false" ');
-    return `<span class="topbar-interface-status is-${status}" role="img" tabindex="0" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${icon}</span>`;
+    return `<button type="button" class="topbar-interface-status is-${status}" data-topbar-interface="${escapeHtml(item.id)}" aria-pressed="${item.enabled}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${icon}</button>`;
   }).join('');
 }
 

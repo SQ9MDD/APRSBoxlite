@@ -83,14 +83,17 @@ function stationDetails(
   title.textContent = station.callsign;
   details.append(title);
   const fields = stationFields(station, ownPosition);
+  const list = document.createElement('dl');
+  list.className = 'map-station-fields';
   for (const [label, value] of fields) {
     if (!value) continue;
-    const row = document.createElement('span');
-    const labelElement = document.createElement('strong');
-    labelElement.textContent = `${label}: `;
-    row.append(labelElement, document.createTextNode(value));
-    details.append(row);
+    const labelElement = document.createElement('dt');
+    labelElement.textContent = `${label}:`;
+    const valueElement = document.createElement('dd');
+    valueElement.textContent = value;
+    list.append(labelElement, valueElement);
   }
+  details.append(list);
   const actions = document.createElement('div');
   actions.className = 'map-station-actions';
   for (const [action, label] of [
@@ -248,6 +251,8 @@ export function renderMapView({
               stationDetails(station, onStationAction, ownPosition()),
               {
                 autoPan: false,
+                minWidth: Math.min(380, Math.max(200, map.getSize().x - 50)),
+                maxWidth: Math.max(200, Math.min(700, map.getSize().x - 50)),
                 className: 'map-station-popup-container',
               },
             );

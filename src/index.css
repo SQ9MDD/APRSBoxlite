@@ -397,10 +397,29 @@ button {
 }
 .map-station-popup {
   display: flex;
-  min-width: 11rem;
+  min-width: 0;
   flex-direction: column;
   gap: 0.18rem;
   overflow-wrap: anywhere;
+}
+.map-station-fields {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  column-gap: 7px;
+  row-gap: 0.18rem;
+  margin: 0;
+  overflow-x: auto;
+}
+.map-station-fields dt {
+  text-align: right;
+  font-weight: 400;
+}
+.map-station-fields dd {
+  min-width: 0;
+  margin: 0;
+  white-space: nowrap;
+  text-align: left;
+  font-weight: 700;
 }
 .map-station-actions {
   display: flex;
@@ -1661,10 +1680,15 @@ button {
   width: 24px;
   height: 24px;
   padding: 2px;
+  border: 0;
   border-radius: 4px;
+  background: transparent;
   color: #ef6666;
-  cursor: help;
+  cursor: pointer;
 }
+.topbar-interface-status:hover { background: #183651; }
+:root[data-theme='light'] .topbar-interface-status:hover { background: #dceefa; }
+.topbar-interface-status:disabled { cursor: wait; opacity: 0.6; }
 .topbar-interface-status svg {
   display: block;
   width: 100%;
@@ -3014,3 +3038,16 @@ button {
 
 .general-link { padding: 0; border: 0; background: none; color: #9cc9ff; font: inherit; text-decoration: underline; cursor: pointer; }
 :root[data-theme='light'] .general-link { color: #235f96; }
+
+.app-tooltip { position: fixed; z-index: 10000; max-width: min(360px, calc(100vw - 16px)); padding: 6px 9px; border: 1px solid #466d8e; border-radius: 5px; background: #0b1829; color: #e9f3ff; font-size: 12px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; box-shadow: 0 3px 12px #0005; }
+.app-tooltip[hidden] { display: none; }
+:root[data-theme='light'] .app-tooltip { background: #fff; color: #172b3c; border-color: #a9c3d8; }
+
+.sidebar-clock { display: grid; justify-items: center; gap: 1px; width: 100%; margin: 10px 0; padding: 7px 8px; border: 1px solid #294966; border-radius: 6px; background: #11243a; color: #dce8f6; text-align: center; cursor: pointer; font-family: monospace; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.sidebar-clock:hover { border-color: #4b9cdb; }
+.sidebar-clock:focus-visible { outline: 2px solid #70b8ff; outline-offset: 2px; }
+.sidebar-clock-time { font-size: 1.46rem; font-weight: 700; white-space: nowrap; }
+.sidebar-clock-date-row { display: inline-flex; align-items: baseline; gap: 4px; color: #9cb2c9; font-size: 0.72rem; }
+.sidebar-clock-date-row [data-clock-zone] { font-size: 0.66rem; letter-spacing: 0.07em; }
+:root[data-theme='light'] .sidebar-clock { background: #f8fbfe; border-color: #c7d8e8; color: #172b3c; }
+:root[data-theme='light'] .sidebar-clock-date-row { color: #526e87; }

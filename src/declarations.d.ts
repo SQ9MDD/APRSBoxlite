@@ -46,6 +46,7 @@ interface Window {
       ): () => void;
     };
     config: {
+      saveClockMode(mode: 'utc' | 'local'): Promise<void>;
       openMapProviders(): Promise<void>;
       getMapCacheStats(id: string): Promise<{ count: number; bytes: number }>;
       clearMapCache(id: string): Promise<void>;
