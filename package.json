@@ -1,7 +1,7 @@
 {
   "name": "aprsbox-lite",
   "productName": "aprsbox-lite",
-  "version": "0.2.5-beta",
+  "version": "0.2.6-beta",
   "private": true,
   "description": "My Electron application description",
   "keywords": [],
