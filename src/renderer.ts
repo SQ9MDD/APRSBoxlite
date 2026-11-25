@@ -826,6 +826,16 @@ async function toggleInterface(id: string): Promise<void> {
 
 appRoot.addEventListener('click', (event) => {
   if (!(event.target instanceof Element)) return;
+  const externalLink = event.target.closest<HTMLAnchorElement>('a[data-external-link]');
+  if (externalLink) {
+    event.preventDefault();
+    event.stopPropagation();
+    void window.aprsbox.config.openExternal(externalLink.getAttribute('href') ?? '').catch((error) => {
+      alertMessage = { title: 'Link not opened', message: error instanceof Error ? error.message : String(error), tone: 'error' };
+      renderApp();
+    });
+    return;
+  }
   if (event.target.closest('[data-action="toggle-clock"]')) {
     clockModeChanged = true;
     clockMode = clockMode === 'utc' ? 'local' : 'utc';

@@ -1,4 +1,5 @@
 import { escapeHtml } from './escapeHtml';
+import { renderComment } from './commentLink';
 import { renderPacketRows } from './PacketScroller';
 import type { Station } from '../types';
 import type { TrafficMonitorFrame } from '../views/TrafficMonitorView';
@@ -38,7 +39,7 @@ export function createRightPanel({
 
 export function renderScrollerStation(station: Station | undefined): string {
   return station
-    ? `<section class="station-card"><div class="panel-heading"><span>${station.callsign}</span><span class="station-symbol kind-${station.kind}">${escapeHtml(station.symbol)}</span></div><dl class="station-details"><div><dt>Heard</dt><dd>${station.lastHeard}</dd></div><div><dt>Position</dt><dd>${station.latitude.toFixed(4)}, ${station.longitude.toFixed(4)}</dd></div>${station.course ? `<div><dt>Course</dt><dd>${station.course} · ${station.speed}</dd></div>` : ''}</dl><p class="station-comment">${escapeHtml(station.comment)}</p></section>`
+    ? `<section class="station-card"><div class="panel-heading"><span>${station.callsign}</span><span class="station-symbol kind-${station.kind}">${escapeHtml(station.symbol)}</span></div><dl class="station-details"><div><dt>Heard</dt><dd>${station.lastHeard}</dd></div><div><dt>Position</dt><dd>${station.latitude.toFixed(4)}, ${station.longitude.toFixed(4)}</dd></div>${station.course ? `<div><dt>Course</dt><dd>${station.course} · ${station.speed}</dd></div>` : ''}</dl><p class="station-comment">${renderComment(station.comment)}</p></section>`
     : '';
 }
 
@@ -97,5 +98,5 @@ export function renderLastPacket(
       360;
     distance = `${km.toFixed(1)} km, ${Math.round(bearing) % 360}°`;
   }
-  return `<section class="last-heard-packet"><h3>Latest packet</h3><dl><dt>Callsign</dt><dd class="last-packet-emphasis">${escapeHtml(displayCallsign)}</dd><dt>QSY</dt><dd class="last-packet-emphasis">${escapeHtml(qsy)}</dd><dt>Distance and azimuth</dt><dd>${escapeHtml(distance)}</dd><dt>Comment</dt><dd>${escapeHtml(comment)}</dd></dl></section>`;
+  return `<section class="last-heard-packet"><h3>Latest packet</h3><dl><dt>Callsign</dt><dd class="last-packet-emphasis">${escapeHtml(displayCallsign)}</dd><dt>QSY</dt><dd class="last-packet-emphasis">${escapeHtml(qsy)}</dd><dt>Distance and azimuth</dt><dd>${escapeHtml(distance)}</dd><dt>Comment</dt><dd>${renderComment(comment)}</dd></dl></section>`;
 }

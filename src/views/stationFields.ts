@@ -1,6 +1,12 @@
 import type { Station } from '../types';
 import type { Coordinates } from '../components/LocationPicker';
 
+export function relativeTime(value: string): string {
+  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 60_000));
+  if (!Number.isFinite(minutes)) return '';
+  return minutes < 1 ? 'Just now' : minutes < 60 ? `${minutes} min ago` : `${Math.floor(minutes / 60)} h ago`;
+}
+
 export function stationDistanceKm(station: Station, ownPosition?: Coordinates): number | undefined {
   if (!ownPosition) return undefined;
   const rad = Math.PI / 180;

@@ -3,11 +3,12 @@ import 'leaflet/dist/leaflet.css';
 import type { Station } from '../types';
 import { createMapOverlays } from './MapOverlays';
 import { createMapRuler, type RulerState } from './MapRuler';
-import { stationFields } from './stationFields';
+import { relativeTime, stationFields } from './stationFields';
 import type { Coordinates } from '../components/LocationPicker';
 import type { MapSettings } from '../mapSettings';
 import { activeMapSource, mapTileUrl } from '../mapSettings';
 import { escapeHtml } from '../components/escapeHtml';
+import { renderComment } from '../components/commentLink';
 
 const symbols = import.meta.glob('../components/icons/aprs-symbols/*.png', {
   eager: true,
@@ -79,6 +80,15 @@ function stationDetails(
 ): HTMLElement {
   const details = document.createElement('div');
   details.className = 'map-station-popup';
+  details.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const link = target.closest<HTMLAnchorElement>('a[data-external-link]');
+    if (!link) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void window.aprsbox.config.openExternal(link.getAttribute('href') ?? '').catch(console.error);
+  });
   const title = document.createElement('strong');
   title.textContent = station.callsign;
   details.append(title);
@@ -90,7 +100,12 @@ function stationDetails(
     const labelElement = document.createElement('dt');
     labelElement.textContent = `${label}:`;
     const valueElement = document.createElement('dd');
-    valueElement.textContent = value;
+    if (label === 'Last activity') {
+      const elapsed = relativeTime(station.lastHeard);
+      valueElement.textContent = elapsed ? `${value} (${elapsed})` : value;
+      valueElement.dataset.lastActivity = station.lastHeard;
+    } else if (label === 'Comment') valueElement.innerHTML = renderComment(value);
+    else valueElement.textContent = value;
     list.append(labelElement, valueElement);
   }
   details.append(list);
@@ -204,6 +219,13 @@ export function renderMapView({
       updateVisibility();
       window.addEventListener('aprs-map:overlays', updateVisibility);
       const markers = new Map<string, { marker: L.Marker; station: Station }>();
+      const activityTimer = setInterval(() => {
+        for (const value of mapElement.querySelectorAll<HTMLElement>('[data-last-activity]')) {
+          const timestamp = value.dataset.lastActivity!;
+          const elapsed = relativeTime(timestamp);
+          value.textContent = `${new Date(timestamp).toLocaleString()}${elapsed ? ` (${elapsed})` : ''}`;
+        }
+      }, 10_000);
       const unsubscribe = subscribeToStations((stations) => {
         overlays.updateStations(stations);
         const active = new Set<string>();
@@ -275,6 +297,7 @@ export function renderMapView({
       window.addEventListener('aprs-map:visible', resize);
       requestAnimationFrame(resize);
       return () => {
+        clearInterval(activityTimer);
         unsubscribe();
         overlays.dispose();
         ruler.dispose();

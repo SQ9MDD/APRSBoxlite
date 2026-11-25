@@ -55,7 +55,7 @@ export function renderTrafficMonitorView(frames: TrafficMonitorFrame[], legendOp
 } {
   const entries = renderTrafficEntries(frames, filter);
   return {
-    html: `<div class="traffic-monitor" aria-label="Traffic monitor"><div class="traffic-table">${entries}</div></div>${legendOpen ? `<div class="traffic-legend-backdrop" data-action="close-traffic-legend"><section class="traffic-legend" role="dialog" aria-modal="true" aria-labelledby="traffic-legend-title"><div class="traffic-legend-heading"><h2 id="traffic-legend-title">Traffic colors</h2><button type="button" data-action="close-traffic-legend" aria-label="Close">×</button></div><div class="traffic-legend-items">${(['beacon', 'weather', 'message'] as const).flatMap((kind) => (['tx', 'rx'] as const).map((direction) => `<span><i class="traffic-own-${kind}-${direction}"></i>Own ${kind}${direction === 'rx' ? ' echo' : ''} ${direction.toUpperCase()}</span>`)).join('')}</div></section></div>` : ''}`,
+    html: `<div class="traffic-monitor" aria-label="Traffic monitor"><div class="traffic-table">${entries}</div></div>${legendOpen ? `<div class="traffic-legend-backdrop" data-action="close-traffic-legend"><section class="traffic-legend" role="dialog" aria-modal="true" aria-labelledby="traffic-legend-title"><div class="traffic-legend-heading"><h2 id="traffic-legend-title">Traffic colors</h2><button type="button" data-action="close-traffic-legend" aria-label="Close">×</button></div><div class="traffic-legend-items">${(['beacon', 'message'] as const).flatMap((kind) => (['tx', 'rx'] as const).map((direction) => `<span><i class="traffic-own-${kind}-${direction}"></i>Own ${kind}${direction === 'rx' ? ' echo' : ''} ${direction.toUpperCase()}</span>`)).join('')}</div></section></div>` : ''}`,
   };
 }
 

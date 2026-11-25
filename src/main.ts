@@ -667,6 +667,12 @@ app.whenReady().then(async () => {
     return updateConfig({ scrollerVisible: visible });
   });
   ipcMain.handle('config:open-map-providers', () => shell.openExternal('https://switch2osm.org/providers/#Allows-free-usage'));
+  ipcMain.handle('app:open-external', (_event, value: unknown) => {
+    if (typeof value !== 'string' || value.length > 2048 || !/^https?:\/\/\S+$/i.test(value)) throw new Error('Invalid URL.');
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) throw new Error('Invalid URL.');
+    return shell.openExternal(url.href);
+  });
   ipcMain.handle('config:save-clock-mode', (_event, value: unknown) => {
     if (value !== 'utc' && value !== 'local') throw new Error('Invalid clock mode.');
     return updateConfig({ clockMode: value });

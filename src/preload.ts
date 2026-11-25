@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
     },
   },
   config: {
+    openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:open-external', url),
     profileAction: (action: import('./stationProfiles').ProfileAction, profileId: string, station: import('./stationProfiles').StationSettings): Promise<Record<string, unknown>> => ipcRenderer.invoke('config:profile-action', action, profileId, station),
     onRuntimeChanged: (callback: (configuration: Record<string, unknown>) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, configuration: Record<string, unknown>) => callback(configuration);

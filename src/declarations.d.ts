@@ -46,6 +46,7 @@ interface Window {
       ): () => void;
     };
     config: {
+      openExternal(url: string): Promise<void>;
       profileAction(action: import('./stationProfiles').ProfileAction, profileId: string, station: import('./stationProfiles').StationSettings): Promise<Record<string, unknown>>;
       onRuntimeChanged(callback: (configuration: Record<string, unknown>) => void): () => void;
       saveClockMode(mode: 'utc' | 'local'): Promise<void>;
