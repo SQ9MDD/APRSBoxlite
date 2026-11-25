@@ -114,5 +114,6 @@ export function stationFields(
   if (weather?.gustMph !== undefined)
     add('Wind gust', `${(weather.gustMph * 1.609344).toFixed(1)} km/h`);
   add('Comment', station.comment);
+  add('Status', station.status);
   return fields;
 }

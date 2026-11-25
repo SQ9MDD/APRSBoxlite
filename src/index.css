@@ -1682,6 +1682,7 @@ button {
   gap: 16px;
   align-items: start;
 }
+.station-form .form-actions { flex-wrap: wrap; }
 .profile-controls { min-width: 0; max-width: none; }
 @media (max-width: 1200px) {
   .station-workspace { grid-template-columns: minmax(0, 1fr); }

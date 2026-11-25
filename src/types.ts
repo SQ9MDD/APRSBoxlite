@@ -72,6 +72,7 @@ export interface Station {
   directHeardAt?: number;
   positionReceivedAt?: string;
   comment: string;
+  status?: string;
   course?: string;
   speed?: string;
   symbol: string;

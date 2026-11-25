@@ -46,6 +46,7 @@ interface Window {
       ): () => void;
     };
     config: {
+      sendStatus(station: import('./stationProfiles').StationSettings, profileId: string): Promise<{ sent: string[]; failed: string[] }>;
       openExternal(url: string): Promise<void>;
       profileAction(action: import('./stationProfiles').ProfileAction, profileId: string, station: import('./stationProfiles').StationSettings): Promise<Record<string, unknown>>;
       onRuntimeChanged(callback: (configuration: Record<string, unknown>) => void): () => void;

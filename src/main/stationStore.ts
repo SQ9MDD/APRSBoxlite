@@ -10,6 +10,7 @@ const MAX_TRACK_POINTS = 60;
 
 export class StationStore {
   private readonly stations = new Map<string, Station>();
+  private readonly statuses = new Map<string, { text: string; receivedAt: number }>();
   private readonly onChange: (stations: Station[]) => void;
   private expiration: ReturnType<typeof setTimeout> | undefined;
 
@@ -36,6 +37,13 @@ export class StationStore {
     const path = headerMatch[3] ?? '';
     const previous = this.stations.get(callsign);
     const now = Date.now();
+    const information = effectivePacket.slice(effectivePacket.indexOf(':') + 1);
+    if (information.startsWith('>')) {
+      const text = information.slice(1).replace(/^\d{6}z/i, '').replace(/[\r\n]+$/, '');
+      this.statuses.delete(source);
+      this.statuses.set(source, { text, receivedAt: now });
+      while (this.statuses.size > MAX_STATIONS) this.statuses.delete(this.statuses.keys().next().value!);
+    }
     // Only the originating station heard on RF can be directly heard locally.
     const directHeardAt = reception?.source === 'kiss' &&
       reception.direction === 'rx' && effectivePacket === packet &&
@@ -53,8 +61,10 @@ export class StationStore {
         Date.now() -
           Date.parse(previous.positionReceivedAt ?? previous.lastHeard) >=
           STATION_AGE_MS
-      )
+      ) {
+        if (information.startsWith('>')) this.publish();
         return;
+      }
       this.stations.set(callsign, {
         ...previous,
         aprsDevice: device,
@@ -63,6 +73,7 @@ export class StationStore {
         path,
         sourceInterface,
         directHeardAt,
+        ...(information.startsWith('>') && !previous.entityType ? { status: this.statuses.get(source)?.text } : {}),
         lastHeard: new Date().toISOString(),
       });
       this.publish();
@@ -90,6 +101,8 @@ export class StationStore {
     this.stations.set(callsign, {
       ...position,
       callsign,
+      ...(!position.entityType && this.statuses.has(source) && now - this.statuses.get(source)!.receivedAt < STATION_AGE_MS
+        ? { status: this.statuses.get(source)!.text } : {}),
       aprsDevice: device,
       aprsClient: device?.identifiedAs ?? previous?.aprsClient,
       destination,
@@ -145,12 +158,21 @@ export class StationStore {
   dispose(): void {
     clearTimeout(this.expiration);
     this.stations.clear();
+    this.statuses.clear();
   }
 
   private publish(): void {
     clearTimeout(this.expiration);
     const now = Date.now();
     let nextExpiration = Infinity;
+    for (const [callsign, status] of this.statuses) {
+      const expiresAt = status.receivedAt + STATION_AGE_MS;
+      if (expiresAt <= now) {
+        this.statuses.delete(callsign);
+        const station = this.stations.get(callsign);
+        if (station && !station.entityType) delete station.status;
+      } else nextExpiration = Math.min(nextExpiration, expiresAt);
+    }
     for (const [callsign, station] of this.stations) {
       if (station.directHeardAt !== undefined) {
         const expiresAt = station.directHeardAt + STATION_AGE_MS;

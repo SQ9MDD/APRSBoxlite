@@ -154,6 +154,7 @@ function updateBleDevices(): void {
 }
 let themeMode: ThemeMode = 'system';
 let beaconSending = false;
+let statusSending = false;
 let mapMaskOpacity = { light: 10, dark: 20 };
 let stationSettings: StationSettings = { ...DEFAULT_STATION };
 let stationProfiles: StationProfile[] = [];
@@ -1481,6 +1482,24 @@ function renderApp(): void {
       beaconSending = false;
       renderApp();
     }));
+  appRoot.querySelector<HTMLButtonElement>('[data-action="send-status"]')?.addEventListener('click', async (event) => {
+    if (statusSending || profileBusy) return;
+    statusSending = true;
+    (event.currentTarget as HTMLButtonElement).disabled = true;
+    try {
+      const result = await window.aprsbox.config.sendStatus({ ...stationSettings }, activeProfileId);
+      alertMessage = {
+        title: result.failed.length ? 'Status partially sent' : 'Status sent',
+        message: `Sent: ${result.sent.join(', ')}.${result.failed.length ? ` Failed: ${result.failed.join('; ')}` : ''}`,
+        tone: result.failed.length ? 'error' : 'success',
+      };
+    } catch (error) {
+      alertMessage = { title: 'Status not sent', message: error instanceof Error ? error.message : String(error), tone: 'error' };
+    } finally {
+      statusSending = false;
+      renderApp();
+    }
+  });
   appRoot
     .querySelectorAll<HTMLButtonElement>('[data-action="new-interface"]')
     .forEach((button) =>

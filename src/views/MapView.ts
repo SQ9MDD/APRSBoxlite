@@ -104,7 +104,7 @@ function stationDetails(
       const elapsed = relativeTime(station.lastHeard);
       valueElement.textContent = elapsed ? `${value} (${elapsed})` : value;
       valueElement.dataset.lastActivity = station.lastHeard;
-    } else if (label === 'Comment') valueElement.innerHTML = renderComment(value);
+    } else if (label === 'Comment' || label === 'Status') valueElement.innerHTML = renderComment(value);
     else valueElement.textContent = value;
     list.append(labelElement, valueElement);
   }
@@ -250,6 +250,7 @@ export function renderMapView({
             if (
               station.lastHeard !== previous.lastHeard ||
               station.comment !== previous.comment ||
+              station.status !== previous.status ||
               station.aprsClient !== previous.aprsClient ||
               station.aprsDevice !== previous.aprsDevice ||
               station.owner !== previous.owner ||

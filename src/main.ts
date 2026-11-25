@@ -588,6 +588,22 @@ app.whenReady().then(async () => {
     if (result.failed.length) console.warn('Beacon not sent on some interfaces:', result.failed.map(({ interface: item, error }) => `${item.name || item.id}: ${error}`).join('; '));
     return { sent: result.sent.map((item) => item.name || item.id), failed: result.failed.map(({ interface: item, error }) => `${item.name || item.id}: ${error}`) };
   };
+  const sendStatus = async (station: StationConfiguration) => {
+    const statuses = kissStatuses();
+    const targets = selectBeaconInterfaces(validateInterfaces(getConfiguration().interfaces ?? []), station.beaconInterfaceId, (item) =>
+      statuses[item.id] === 'connected' && (item.type !== 'aprs-is' || aprsIsRxService.canTransmit(item.id)),
+    );
+    const frame = encodeStatus(station);
+    const result = await transmitBeacon(targets, frame, transmitKiss);
+    const packet = new KissFrameDecoder().consume(frame)[0];
+    if (packet) {
+      const source = result.sent[0];
+      stationStore.receive(packet, source.name || source.hostPort || source.serialDevice || source.id, {
+        source: source.type === 'aprs-is' ? 'aprs-is' : 'kiss', direction: 'tx',
+      });
+    }
+    return { sent: result.sent.map((item) => item.name || item.id), failed: result.failed.map(({ interface: item, error }) => `${item.name || item.id}: ${error}`) };
+  };
   statusScheduler = createStatusScheduler(
     () => {
       try { return validateStationConfiguration(getConfiguration().station); }
@@ -595,12 +611,8 @@ app.whenReady().then(async () => {
     },
     async () => {
       const station = validateStationConfiguration(getConfiguration().station);
-      const statuses = kissStatuses();
-      const targets = selectBeaconInterfaces(validateInterfaces(getConfiguration().interfaces ?? []), station.beaconInterfaceId, (item) =>
-        statuses[item.id] === 'connected' && (item.type !== 'aprs-is' || aprsIsRxService.canTransmit(item.id)),
-      );
-      const result = await transmitBeacon(targets, encodeStatus(station), transmitKiss);
-      if (result.failed.length) console.warn('Status not sent on some interfaces:', result.failed.map(({ interface: item, error }) => `${item.name || item.id}: ${error}`).join('; '));
+      const result = await sendStatus(station);
+      if (result.failed.length) console.warn('Status not sent on some interfaces:', result.failed.join('; '));
     },
   );
   statusScheduler.schedule();
@@ -804,6 +816,13 @@ app.whenReady().then(async () => {
     const station = validateStationConfiguration(value);
     const result = await sendBeacon(station);
     scheduleBeacon();
+    return result;
+  });
+  ipcMain.handle('station:send-status', async (_event, value: unknown, profileId: unknown) => {
+    assertProfile(profileId);
+    if (switchingProfile) throw new Error('Station profile is changing.');
+    const result = await sendStatus(validateStationConfiguration(value));
+    statusScheduler?.schedule();
     return result;
   });
   ipcMain.handle('messages:send', (_event, value: unknown, profileId: unknown) => {
