@@ -3,6 +3,7 @@ import 'leaflet/dist/leaflet.css';
 import type { Station } from '../types';
 import { createMapOverlays } from './MapOverlays';
 import { createMapRuler, type RulerState } from './MapRuler';
+import { createPacketRoutes } from './PacketRoutes';
 import { relativeTime, stationFields } from './stationFields';
 import type { Coordinates } from '../components/LocationPicker';
 import type { MapSettings } from '../mapSettings';
@@ -26,10 +27,12 @@ interface MapViewOptions {
     coverage: boolean;
     grid: boolean;
     ruler: boolean;
+    packetRoutes: boolean;
   };
   rulerState: RulerState;
   onStationAction: (action: 'message' | 'details', callsign: string) => void;
   ownPosition: () => Coordinates | undefined;
+  ownCallsign: () => string;
   mapSettings: MapSettings;
 }
 
@@ -137,6 +140,7 @@ export function renderMapView({
   rulerState,
   onStationAction,
   ownPosition,
+  ownCallsign,
   mapSettings,
 }: MapViewOptions): {
   html: string;
@@ -161,6 +165,7 @@ export function renderMapView({
           'map-station-labels-hidden',
           map.getZoom() <= mapSettings.stationLabelHideAtZoom,
         );
+        window.dispatchEvent(new Event('aprs-map:label-visibility'));
       };
       syncStationLabelVisibility();
       map.on('zoomend', syncStationLabelVisibility);
@@ -211,10 +216,13 @@ export function renderMapView({
       }).addTo(map);
       const overlays = createMapOverlays(map, mapSettings.coverageFillOpacity / 100);
       const ruler = createMapRuler(map, rulerState);
+      let routeStations: Station[] = [];
+      const packetRoutes = createPacketRoutes(map, () => routeStations, ownPosition, ownCallsign);
       const updateVisibility = () => {
         const visibility = overlayVisibility();
         overlays.setVisibility(visibility);
         ruler.setVisible(visibility.ruler);
+        packetRoutes.setVisible(visibility.packetRoutes);
       };
       updateVisibility();
       window.addEventListener('aprs-map:overlays', updateVisibility);
@@ -227,6 +235,7 @@ export function renderMapView({
         }
       }, 10_000);
       const unsubscribe = subscribeToStations((stations) => {
+        routeStations = stations;
         overlays.updateStations(stations);
         const active = new Set<string>();
         for (const station of stations) {
@@ -267,9 +276,13 @@ export function renderMapView({
           } else {
             const marker = L.marker(coordinates, {
               icon: stationIcon(station),
-              title: station.callsign,
               alt: station.callsign,
             }).addTo(map);
+            const markerElement = marker.getElement();
+            if (markerElement) {
+              markerElement.dataset.stationTooltip = station.callsign;
+              markerElement.setAttribute('aria-label', station.callsign);
+            }
             marker.bindPopup(
               stationDetails(station, onStationAction, ownPosition()),
               {
@@ -301,6 +314,7 @@ export function renderMapView({
         clearInterval(activityTimer);
         unsubscribe();
         overlays.dispose();
+        packetRoutes.dispose();
         ruler.dispose();
         window.removeEventListener('aprs-map:overlays', updateVisibility);
         window.removeEventListener('aprs-map:visible', resize);

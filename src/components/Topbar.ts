@@ -24,6 +24,7 @@ import tcpInterfaceIcon from './icons/ethernet.svg?raw';
 import serialInterfaceIcon from './icons/serial-port.svg?raw';
 import bluetoothInterfaceIcon from './icons/bluetooth.svg?raw';
 import internetInterfaceIcon from './icons/web.svg?raw';
+import routesIcon from './icons/routes.svg';
 import type { AppView } from '../types';
 import type { InterfaceSettings, InterfaceConnectionStatus } from '../views/SettingsView';
 import { escapeHtml } from './escapeHtml';
@@ -34,6 +35,7 @@ export type MapToolId =
   | 'packet'
   | 'scroller'
   | 'ruler'
+  | 'packetRoutes'
   | 'grid';
 
 export type MapToolState = Record<MapToolId, boolean>;
@@ -48,6 +50,7 @@ interface ToolbarControl {
 }
 
 const mapControls: ToolbarControl[] = [
+  { id: 'packetRoutes', label: 'RF routes: dashed segments indicate unknown digipeater positions', icon: routesIcon, offIcon: routesIcon },
   {
     id: 'tracks',
     label: 'Show or hide tracks',

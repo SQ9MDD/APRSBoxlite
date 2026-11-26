@@ -331,6 +331,20 @@ button {
 .aprs-marker-wrapper {
   overflow: visible !important;
 }
+.rf-packet-route {
+  --route-glow: #ffb347;
+  animation: rf-packet-flash 10s ease-out forwards;
+}
+@keyframes rf-packet-flash {
+  0% { opacity: 1; filter: drop-shadow(0 0 4px var(--route-glow)); }
+  3% { opacity: 0.65; filter: none; }
+  6% { opacity: 1; filter: drop-shadow(0 0 3px var(--route-glow)); }
+  12% { opacity: 0.85; filter: none; }
+  100% { opacity: 0; filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rf-packet-route { animation: none; }
+}
 .aprs-marker {
   display: grid;
   width: 28px;
@@ -1324,19 +1338,22 @@ button {
 }
 
 .last-heard-packet {
-  display: grid;
-  gap: 0;
+  display: flex;
+  flex-direction: column;
   flex: none;
-  padding: 0.55rem 0.64rem;
+  height: 190px;
+  overflow: hidden;
   color: #c6d7e8;
   font-size: 11px;
 }
 
-.last-heard-packet h3 {
-  margin: 0 0 0.34rem;
-  font-size: 0.77rem;
-  line-height: 1.2;
+.last-packet-content {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  padding: 0.55rem 0.64rem;
 }
+.last-packet-content::-webkit-scrollbar { display: none; }
 .last-heard-packet dl {
   display: grid;
   grid-template-columns: 7rem minmax(0, 1fr);

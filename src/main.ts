@@ -66,6 +66,7 @@ interface InterfaceConfiguration {
 
 const existingUserDataDirectory = app.getPath('userData');
 app.setName('APRSBOX');
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 mkdirSync(existingUserDataDirectory, { recursive: true });
 app.setPath('userData', existingUserDataDirectory);
 
@@ -441,6 +442,7 @@ app.whenReady().then(async () => {
     statusScheduler?.schedule();
     notifyPower('system:resume');
   });
+  let knownMessageIds = new Set(storedMessages.map((message) => message.id));
   messageService = new MessageService(
     () => {
       const station = getConfiguration().station as
@@ -455,7 +457,14 @@ app.whenReady().then(async () => {
     },
     transmitMessage,
     (messages) => {
+      const newMessage = messages.some((message) => message.direction === 'rx' && message.unread && !knownMessageIds.has(message.id));
+      knownMessageIds = new Set(messages.map((message) => message.id));
       broadcast('messages:changed', messages);
+      if (newMessage) {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send('messages:received');
+        }
+      }
       persistMessages(messages);
     },
     storedMessages,
@@ -677,6 +686,14 @@ app.whenReady().then(async () => {
   ipcMain.handle('config:save-scroller-visibility', (_event, visible: unknown) => {
     if (typeof visible !== 'boolean') throw new Error('Invalid scroller visibility.');
     return updateConfig({ scrollerVisible: visible });
+  });
+  ipcMain.handle('config:save-map-tool', (_event, tool: unknown, visible: unknown) => {
+    if (typeof tool !== 'string' || !['tracks', 'coverage', 'packet', 'scroller', 'ruler', 'grid', 'packetRoutes'].includes(tool) || typeof visible !== 'boolean') throw new Error('Invalid map tool setting.');
+    return updateConfig(() => {
+      const stored = getConfiguration().mapTools;
+      const current = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored as Record<string, unknown> : {};
+      return { mapTools: { ...current, [tool]: visible }, ...(tool === 'scroller' ? { scrollerVisible: visible } : {}) };
+    });
   });
   ipcMain.handle('config:open-map-providers', () => shell.openExternal('https://switch2osm.org/providers/#Allows-free-usage'));
   ipcMain.handle('app:open-external', (_event, value: unknown) => {

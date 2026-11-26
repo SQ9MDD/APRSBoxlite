@@ -34,6 +34,11 @@ contextBridge.exposeInMainWorld('aprsbox', {
     },
   },
   messages: {
+    onReceived: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('messages:received', listener);
+      return () => ipcRenderer.removeListener('messages:received', listener);
+    },
     saveGroups: (groups: { rf: string[]; aprsIs: string[] }, profileId: string): Promise<void> => ipcRenderer.invoke('config:save-message-groups', groups, profileId),
     get: (): Promise<AprsMessage[]> => ipcRenderer.invoke('messages:get'),
     markRead: (recipient: string): Promise<void> => ipcRenderer.invoke('messages:mark-read', recipient),
@@ -67,6 +72,7 @@ contextBridge.exposeInMainWorld('aprsbox', {
     },
   },
   config: {
+    saveMapTool: (tool: import('./components/Topbar').MapToolId, visible: boolean) => ipcRenderer.invoke('config:save-map-tool', tool, visible),
     sendStatus: (station: import('./stationProfiles').StationSettings, profileId: string): Promise<{ sent: string[]; failed: string[] }> => ipcRenderer.invoke('station:send-status', station, profileId),
     openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:open-external', url),
     profileAction: (action: import('./stationProfiles').ProfileAction, profileId: string, station: import('./stationProfiles').StationSettings): Promise<Record<string, unknown>> => ipcRenderer.invoke('config:profile-action', action, profileId, station),

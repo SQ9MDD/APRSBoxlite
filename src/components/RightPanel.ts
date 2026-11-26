@@ -60,8 +60,9 @@ export function renderLastPacket(
       ? undefined
       : stations[0];
   const displayCallsign = callsign ?? station?.callsign;
+  const header = '<div class="drawer-header"><span>Latest packet</span><button data-action="close-latest-packet" type="button" aria-label="Hide latest packet">×</button></div>';
   if (!displayCallsign)
-    return '<section class="last-heard-packet"><span>No decoded APRS stations available yet.</span></section>';
+    return `<section class="last-heard-packet">${header}<div class="last-packet-content">No decoded APRS stations available yet.</div></section>`;
   const comment = station?.comment.trim() || '-';
   const qsyData = station?.decoded?.qsy;
   const qsy = qsyData
@@ -98,5 +99,5 @@ export function renderLastPacket(
       360;
     distance = `${km.toFixed(1)} km, ${Math.round(bearing) % 360}°`;
   }
-  return `<section class="last-heard-packet"><h3>Latest packet</h3><dl><dt>Callsign</dt><dd class="last-packet-emphasis">${escapeHtml(displayCallsign)}</dd><dt>QSY</dt><dd class="last-packet-emphasis">${escapeHtml(qsy)}</dd><dt>Distance and azimuth</dt><dd>${escapeHtml(distance)}</dd><dt>Comment</dt><dd>${renderComment(comment)}</dd></dl></section>`;
+  return `<section class="last-heard-packet">${header}<div class="last-packet-content"><dl><dt>Callsign</dt><dd class="last-packet-emphasis">${escapeHtml(displayCallsign)}</dd><dt>QSY</dt><dd class="last-packet-emphasis">${escapeHtml(qsy)}</dd><dt>Distance and azimuth</dt><dd>${escapeHtml(distance)}</dd><dt>Comment</dt><dd>${renderComment(comment)}</dd></dl></div></section>`;
 }

@@ -11,23 +11,28 @@ export function installTooltips(): void {
   let title = '';
   let timer: ReturnType<typeof setTimeout> | undefined;
 
+  const stationLabelVisible = (element: Element) =>
+    element.matches('.aprs-marker-wrapper') &&
+    !!element.closest('.aprs-map:not(.map-station-labels-hidden)');
+
   const hide = () => {
     clearTimeout(timer);
     tooltip.hidden = true;
-    if (target?.isConnected && !target.hasAttribute('title')) target.setAttribute('title', title);
+    if (target?.isConnected && !target.hasAttribute('data-station-tooltip') && !target.hasAttribute('title')) target.setAttribute('title', title);
     target = undefined;
     title = '';
   };
   const show = (element: Element) => {
     if (target === element) return;
     hide();
-    const value = element.getAttribute('title');
+    if (stationLabelVisible(element)) return;
+    const value = element.getAttribute('data-station-tooltip') ?? element.getAttribute('title');
     if (!value?.trim()) return;
     target = element;
     title = value;
     element.removeAttribute('title');
     timer = setTimeout(() => {
-      if (!target?.isConnected) { hide(); return; }
+      if (!target?.isConnected || stationLabelVisible(target)) { hide(); return; }
       tooltip.textContent = title;
       tooltip.hidden = false;
       const rect = target.getBoundingClientRect();
@@ -41,7 +46,7 @@ export function installTooltips(): void {
   document.addEventListener('mouseover', (event) => {
     if (!(event.target instanceof Element)) return;
     if (target?.contains(event.target)) return;
-    const element = event.target.closest('[title]');
+    const element = event.target.closest('[title], [data-station-tooltip]');
     if (element) show(element);
     else hide();
   });
@@ -51,7 +56,7 @@ export function installTooltips(): void {
   });
   document.addEventListener('focusin', (event) => {
     if (event.target instanceof Element) {
-      const element = event.target.closest('[title]');
+      const element = event.target.closest('[title], [data-station-tooltip]');
       if (element) show(element);
     }
   });
@@ -60,4 +65,7 @@ export function installTooltips(): void {
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') hide(); });
   document.addEventListener('scroll', hide, true);
   window.addEventListener('blur', hide);
+  window.addEventListener('aprs-map:label-visibility', () => {
+    if (target && stationLabelVisible(target)) hide();
+  });
 }

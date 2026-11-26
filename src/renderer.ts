@@ -1,5 +1,6 @@
 import { DEFAULT_STATION, profileLabel, type StationProfile, type ProfileAction } from './stationProfiles';
 import { renderProfileDialog, type ProfileDialog } from './views/StationProfilesView';
+import { playMessageSound } from './messageSound';
 import { normalizeMessageGroups, readMessageGroups } from './messageGroups';
 import { defaultAprsIsFilter } from './aprsIsFilter';
 import './index.css';
@@ -197,8 +198,9 @@ const mapTools: MapToolState = {
   scroller: true,
   ruler: false,
   grid: false,
+  packetRoutes: true,
 };
-let scrollerVisibilityChanged = false;
+const changedMapTools = new Set<MapToolId>();
 let scrollerChangeRevision = 0;
 let scrollerBeforeSleep: { visible: boolean; revision: number } | undefined;
 let disposeCurrentView: (() => void) | undefined;
@@ -427,8 +429,14 @@ async function loadConfiguration(): Promise<void> {
     if (configuration.mapSettings !== undefined) {
       try { mapSettings = validateMapSettings(configuration.mapSettings); } catch { /* Keep the default source if saved settings are invalid. */ }
     }
-    if (!scrollerVisibilityChanged && typeof configuration.scrollerVisible === 'boolean')
+    const savedMapTools = configuration.mapTools && typeof configuration.mapTools === 'object' && !Array.isArray(configuration.mapTools)
+      ? configuration.mapTools as Record<string, unknown> : {};
+    for (const tool of Object.keys(mapTools) as MapToolId[]) {
+      if (!changedMapTools.has(tool) && typeof savedMapTools[tool] === 'boolean') mapTools[tool] = savedMapTools[tool];
+    }
+    if (!changedMapTools.has('scroller') && typeof savedMapTools.scroller !== 'boolean' && typeof configuration.scrollerVisible === 'boolean')
       mapTools.scroller = configuration.scrollerVisible;
+    window.dispatchEvent(new Event('aprs-map:overlays'));
     const mask = configuration.mapMaskOpacity as
       | Record<string, unknown>
       | undefined;
@@ -594,6 +602,7 @@ const pageRenderers: Record<
       mapSettings,
       rulerState,
       ownPosition: () => parseCoordinates(stationSettings.location),
+      ownCallsign: () => `${stationSettings.callsign}${stationSettings.ssid}`,
       onStationAction: (action, callsign) => {
         if (action === 'details') {
           detailCallsign = callsign;
@@ -609,6 +618,7 @@ const pageRenderers: Record<
         coverage: mapTools.coverage,
         grid: mapTools.grid,
         ruler: mapTools.ruler,
+        packetRoutes: mapTools.packetRoutes,
       }),
       onViewportChanged: (viewport) => {
         mapViewport = viewport;
@@ -1050,9 +1060,15 @@ appRoot.addEventListener('click', (event) => {
   }
   if (event.target.closest('.right-panel [data-action="close-scroller"]')) {
     mapTools.scroller = false;
-    scrollerVisibilityChanged = true;
+    changedMapTools.add('scroller');
     scrollerChangeRevision++;
-    void window.aprsbox.config.saveScrollerVisibility(false).catch(console.error);
+    void window.aprsbox.config.saveMapTool('scroller', false).catch(console.error);
+    renderApp();
+  }
+  if (event.target.closest('.right-panel [data-action="close-latest-packet"]')) {
+    mapTools.packet = false;
+    changedMapTools.add('packet');
+    void window.aprsbox.config.saveMapTool('packet', false).catch(console.error);
     renderApp();
   }
 });
@@ -1390,10 +1406,10 @@ function renderApp(): void {
       button.addEventListener('click', () => {
         const tool = button.dataset.tool as MapToolId;
         mapTools[tool] = !mapTools[tool];
+        changedMapTools.add(tool);
+        void window.aprsbox.config.saveMapTool(tool, mapTools[tool]).catch(console.error);
         if (tool === 'scroller') {
-          scrollerVisibilityChanged = true;
           scrollerChangeRevision++;
-          void window.aprsbox.config.saveScrollerVisibility(mapTools.scroller).catch(console.error);
         }
         window.dispatchEvent(new Event('aprs-map:overlays'));
         renderApp();
@@ -1801,6 +1817,7 @@ function renderApp(): void {
 }
 
 applyTheme();
+window.aprsbox.messages.onReceived(() => { void playMessageSound().catch(console.error); });
 let receivedLiveMessages = false;
 window.aprsbox.messages.onChanged((next) => {
   receivedLiveMessages = true;

@@ -24,6 +24,7 @@ interface Window {
       onResume(callback: () => void): () => void;
     };
     messages: {
+      onReceived(callback: () => void): () => void;
       saveGroups(groups: { rf: string[]; aprsIs: string[] }, profileId: string): Promise<void>;
       get(): Promise<import('./types').AprsMessage[]>;
       markRead(recipient: string): Promise<void>;
@@ -46,6 +47,7 @@ interface Window {
       ): () => void;
     };
     config: {
+      saveMapTool(tool: import('./components/Topbar').MapToolId, visible: boolean): Promise<{ path: string; storage: 'portable' | 'userData' }>;
       sendStatus(station: import('./stationProfiles').StationSettings, profileId: string): Promise<{ sent: string[]; failed: string[] }>;
       openExternal(url: string): Promise<void>;
       profileAction(action: import('./stationProfiles').ProfileAction, profileId: string, station: import('./stationProfiles').StationSettings): Promise<Record<string, unknown>>;
